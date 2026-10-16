@@ -20,9 +20,16 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 | **6. Kho mã nguồn GitHub** | **[https://github.com/HienPhuong99/ChamcongvaTinhluong](https://github.com/HienPhuong99/ChamcongvaTinhluong)** | Lưu trữ toàn bộ mã nguồn Web, Mobile PWA, Expo Go & Google Sheets Apps Script |
 
 ### 💡 Cách cài App Chấm Công ra màn hình chính điện thoại (iOS / Android không cần App Store)
-1. Mở đường dẫn **[https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile](https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile)** bằng **Safari** (trên iPhone) hoặc **Chrome** (trên Android).
+1. Mở đường dẫn **[https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile](https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile)** (hoặc **[https://sites.google.com/view/phuonghihi-staff](https://sites.google.com/view/phuonghihi-staff)**) bằng **Safari** (trên iPhone) hoặc **Chrome** (trên Android).
 2. Bấm nút **Chia sẻ (Share)** → chọn **Thêm vào Màn hình chính (Add to Home Screen)**.
 3. Biểu tượng chữ **`p`** của **phuonghihi** sẽ xuất hiện trên màn hình điện thoại như một ứng dụng độc lập.
+
+### 🌐 Hệ Sinh Thái 2 Trang Google Sites Đồng Bộ Của `phuonghihi`
+- **Cổng Chấm Công, Xếp Ca & Tính Lương Nhân Viên**: **[https://sites.google.com/view/phuonghihi-staff](https://sites.google.com/view/phuonghihi-staff)**
+  - Nhúng trực tiếp hệ thống Quản trị Nhân sự, Điểm danh GPS/QR & Tính lương 5 bước.
+  - Trên thanh Topbar của phần mềm có nút **`Web Bán hàng`** để chuyển 1 chạm sang trang bán hàng.
+  - **Link trình chỉnh sửa (Editor)**: [https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit)
+- **Cổng Bán Hàng iPhone Chính Hãng & Kho IMEI**: **[https://sites.google.com/view/phuonghihi](https://sites.google.com/view/phuonghihi)**
 
 ---
 
@@ -49,8 +56,9 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
   - Trên **Web Mobile PWA** (`?mode=mobile`): Chọn nhân viên ở thanh **Đang chấm công với tư cách** ngay đầu màn hình điện thoại.
   - Trên **App Native Expo Go**: Bấm vào thẻ tên nhân viên ở góc trên cùng bên phải màn hình để chuyển nhanh giữa các nhân viên (`NV0000`, `NV0001`, `NV0002`, `NV0003`, `NV0009`, ...).
 
-### 2.3. Tài khoản Admin sở hữu File gốc Excel / Google Sheets & Script liên quan
-- **Tài khoản Google / Git chủ sở hữu (Owner)**: **Hien Phuong** (`hphuong123123@gmail.com`) — GitHub: [`HienPhuong99`](https://github.com/HienPhuong99/ChamcongvaTinhluong).
+### 2.3. Tài khoản Admin sở hữu Google Sites, File gốc Excel / Google Sheets & Script liên quan
+- **Tài khoản Google sở hữu Google Sites (`phuonghihi` & `phuonghihi-staff`) và Google Sheets**: **Nguyen Hien Phuong** (`nhphuong0299@gmail.com`).
+- **Tài khoản GitHub chủ sở hữu mã nguồn**: **Hien Phuong** (`hphuong123123@gmail.com`) — GitHub: [`HienPhuong99/ChamcongvaTinhluong`](https://github.com/HienPhuong99/ChamcongvaTinhluong) & [`HienPhuong99/web-app`](https://github.com/HienPhuong99/web-app).
 - **Tài khoản Admin trên phần mềm (`super_admin`)**: `ACC-001` — **Quản lý cửa hàng (phuonghihi)** (`@admin` / `admin@phuonghihi.vn`) — nắm toàn quyền quản trị dữ liệu gốc, nhập/xuất file Excel (`.xlsx`, `.csv`), chốt bảng công, bảng lương và cấu hình kết nối Google Sheets.
 - **Script Google Sheets & Apps Script gốc**: Lưu tại [`google-sheets/Code.gs`](./google-sheets/Code.gs)
   - Chứa hàm `setupPhuonghihiDatabase()` tự động khởi tạo **8 trang tính (Sheets) chuẩn**: `NhanVien`, `PhanCa`, `DiemDanh`, `DonTu`, `BangCong`, `BangLuong`, `CaiDat`, `NhatKyHeThong`.
