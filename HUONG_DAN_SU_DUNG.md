@@ -14,7 +14,7 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 | :--- | :--- | :--- |
 | **1. Web Quản trị & Cổng Nhân sự (Live HTTPS)** | **[https://hienphuong99.github.io/ChamcongvaTinhluong/](https://hienphuong99.github.io/ChamcongvaTinhluong/)** | Quản lý cửa hàng, Nhân sự (HR), Kế toán, Trưởng nhóm & Nhân viên trên máy tính/iPad |
 | **2. App Chấm Công Điện Thoại (Mobile PWA)** | **[https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile](https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile)** | Nhân viên mở trên trình duyệt điện thoại (Safari / Chrome) để chấm công GPS/QR, xin phép, xem phiếu lương |
-| **3. Trang Google Sites Chấm Công (Đã nhúng sẵn)** | **[Mở Google Sites Chấm Công phuonghihi](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit)** *(Bấm **Xuất bản** chọn đuôi `sites.google.com/view/phuonghihi-chamcong`)* | Nhúng trực tiếp trong hệ sinh thái Google Sites của Cửa hàng `phuonghihi` |
+| **3. Trang Google Sites Chấm Công & Nhân Sự** | **[https://sites.google.com/view/phuonghihi-staff](https://sites.google.com/view/phuonghihi-staff)** *(Trình sửa: [Mở Editor](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit))* | Trang Google Sites chính thức dành cho nhân sự Cửa hàng `phuonghihi` |
 | **4. Trang Google Sites Bán hàng & Kho IMEI** | **[https://sites.google.com/view/phuonghihi](https://sites.google.com/view/phuonghihi)** | Hệ thống Web Bán hàng iPhone chính hãng của Cửa hàng `phuonghihi` |
 | **5. App Native trên Điện thoại (Expo Go)** | **`exp://192.168.0.23:8081`** *(Quét mã QR bằng nút **Expo Go** trên thanh Topbar Web)* | Chạy ứng dụng React Native mượt mà trực tiếp trong app **Expo Go** (iOS / Android) |
 | **6. Kho mã nguồn GitHub** | **[https://github.com/HienPhuong99/ChamcongvaTinhluong](https://github.com/HienPhuong99/ChamcongvaTinhluong)** | Lưu trữ toàn bộ mã nguồn Web, Mobile PWA, Expo Go & Google Sheets Apps Script |
@@ -48,6 +48,15 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 - **Cách đổi nhân viên đang thao tác trên App Điện Thoại**:
   - Trên **Web Mobile PWA** (`?mode=mobile`): Chọn nhân viên ở thanh **Đang chấm công với tư cách** ngay đầu màn hình điện thoại.
   - Trên **App Native Expo Go**: Bấm vào thẻ tên nhân viên ở góc trên cùng bên phải màn hình để chuyển nhanh giữa các nhân viên (`NV0000`, `NV0001`, `NV0002`, `NV0003`, `NV0009`, ...).
+
+### 2.3. Tài khoản Admin sở hữu File gốc Excel / Google Sheets & Script liên quan
+- **Tài khoản Google / Git chủ sở hữu (Owner)**: **Hien Phuong** (`hphuong123123@gmail.com`) — GitHub: [`HienPhuong99`](https://github.com/HienPhuong99/ChamcongvaTinhluong).
+- **Tài khoản Admin trên phần mềm (`super_admin`)**: `ACC-001` — **Quản lý cửa hàng (phuonghihi)** (`@admin` / `admin@phuonghihi.vn`) — nắm toàn quyền quản trị dữ liệu gốc, nhập/xuất file Excel (`.xlsx`, `.csv`), chốt bảng công, bảng lương và cấu hình kết nối Google Sheets.
+- **Script Google Sheets & Apps Script gốc**: Lưu tại [`google-sheets/Code.gs`](./google-sheets/Code.gs)
+  - Chứa hàm `setupPhuonghihiDatabase()` tự động khởi tạo **8 trang tính (Sheets) chuẩn**: `NhanVien`, `PhanCa`, `DiemDanh`, `DonTu`, `BangCong`, `BangLuong`, `CaiDat`, `NhatKyHeThong`.
+  - Chứa các endpoint `doGet` và `doPost` để đồng bộ dữ liệu 2 chiều và tự động gửi email phiếu lương.
+  - **URL Web App Apps Script đang kết nối sẵn**: `https://script.google.com/macros/s/AKfycbx66egogcD-sQxv48gLIjCJqeIIEeD_jwkIdmSYAKRsrHKjF_2hV1SMfa-yHRMTt02Z/exec` (cấu hình tại mục **Cài đặt → Tính lương & Sheets**).
+- **Dữ liệu gốc (Seed Data 50 nhân sự, bảng công, bảng lương)**: Lưu tại [`src/data/seedData.ts`](./src/data/seedData.ts). Admin (`@admin`), Nhân sự (`@minhanh.hr`) và Kế toán (`@ngoclan.kt`) có thể **Xuất ra file Excel (`.xlsx` / `.csv`)** hoặc **Nhập từ file Excel** trực tiếp tại phân hệ **Nhân viên** và **Báo cáo**.
 
 ---
 
