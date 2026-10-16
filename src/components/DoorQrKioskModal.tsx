@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { X, RefreshCw, QrCode, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
+import { generateDoorQrToken, verifyDoorQrToken } from '../utils/helpers';
 
 export const DoorQrKioskModal: React.FC = () => {
   const {
@@ -10,10 +11,11 @@ export const DoorQrKioskModal: React.FC = () => {
     settings,
     scopedEmployees,
     checkInOrOut,
+    showToast,
   } = useHRM();
 
   const [secondsLeft, setSecondsLeft] = useState(45);
-  const [tokenSeed, setTokenSeed] = useState(() => `PHUONGHIHI-DOOR-${Date.now()}`);
+  const [tokenSeed, setTokenSeed] = useState(() => generateDoorQrToken());
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [selectedEmpId, setSelectedEmpId] = useState<string>('NV0003');
 
@@ -22,7 +24,7 @@ export const DoorQrKioskModal: React.FC = () => {
     const interval = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev <= 1) {
-          setTokenSeed(`PHUONGHIHI-DOOR-${Date.now()}`);
+          setTokenSeed(generateDoorQrToken());
           return 45;
         }
         return prev - 1;
@@ -53,17 +55,23 @@ export const DoorQrKioskModal: React.FC = () => {
   if (!isDoorQrModalOpen) return null;
 
   const handleManualRotate = () => {
-    setTokenSeed(`PHUONGHIHI-DOOR-${Date.now()}`);
+    setTokenSeed(generateDoorQrToken());
     setSecondsLeft(45);
   };
 
   const handleSimulateScan = () => {
+    const verification = verifyDoorQrToken(tokenSeed);
+    if (!verification.valid) {
+      showToast('Mã QR không hợp lệ hoặc đã hết hạn!', verification.reason, 'warning');
+      handleManualRotate();
+      return;
+    }
     checkInOrOut({
       employeeId: selectedEmpId,
       method: 'QR tại cửa',
       distanceMeters: 5,
       gpsAccuracy: 8,
-      note: `Quét mã QR tại cửa (${tokenSeed.slice(-6)})`,
+      note: `Quét mã QR tại cửa đã xác thực chữ ký (${tokenSeed.slice(-10)})`,
     });
   };
 

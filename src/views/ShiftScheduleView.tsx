@@ -10,6 +10,7 @@ import {
   Lightbulb,
   X,
   RotateCcw,
+  Sparkles,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { ShiftCode } from '../types';
@@ -42,6 +43,8 @@ export const ShiftScheduleView: React.FC = () => {
     shiftAssignments,
     assignShift,
     bulkAssignShifts,
+    autoScheduleWeekWithAI,
+    hasApprovedLeaveOnDate,
     setSelectedEmployeeId,
   } = useHRM();
 
@@ -53,6 +56,7 @@ export const ShiftScheduleView: React.FC = () => {
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [bulkDept, setBulkDept] = useState<string>('ALL');
   const [bulkShift, setBulkShift] = useState<ShiftCode>('hanh_chinh');
+  const [showAllRows, setShowAllRows] = useState(false);
 
   const currentWeekDays = weekIndex === 1 ? WEEK_DAYS_OCT_12 : WEEK_DAYS_OCT_05;
 
@@ -67,6 +71,32 @@ export const ShiftScheduleView: React.FC = () => {
       ),
     [scopedEmployees, searchEmp]
   );
+
+  // Build O(1) lookup map for shift assignments to optimize rendering 50x7 cells
+  const assignmentMap = useMemo(() => {
+    const map = new Map<string, ShiftCode>();
+    for (let i = 0; i < shiftAssignments.length; i++) {
+      const a = shiftAssignments[i];
+      map.set(`${a.employeeId}__${a.date}`, a.shiftCode);
+    }
+    return map;
+  }, [shiftAssignments]);
+
+  // Count leave conflicts in current week
+  const leaveConflictCount = useMemo(() => {
+    let count = 0;
+    activeEmps.forEach((emp) => {
+      currentWeekDays.forEach((day) => {
+        if (
+          assignmentMap.has(`${emp.id}__${day.date}`) &&
+          hasApprovedLeaveOnDate(emp.id, day.date)
+        ) {
+          count++;
+        }
+      });
+    });
+    return count;
+  }, [activeEmps, currentWeekDays, assignmentMap, hasApprovedLeaveOnDate]);
 
   // Stop painting when mouse released anywhere, or Esc pressed
   useEffect(() => {
@@ -95,11 +125,9 @@ export const ShiftScheduleView: React.FC = () => {
   };
 
   const getAssignedShift = (employeeId: string, date: string) => {
-    const found = shiftAssignments.find(
-      (a) => a.employeeId === employeeId && a.date === date
-    );
-    if (!found) return null;
-    return shiftTemplates.find((t) => t.code === found.shiftCode) || null;
+    const code = assignmentMap.get(`${employeeId}__${date}`);
+    if (!code) return null;
+    return shiftTemplates.find((t) => t.code === code) || null;
   };
 
   const activeBrushTemplate = useMemo(
@@ -116,6 +144,8 @@ export const ShiftScheduleView: React.FC = () => {
     bulkAssignShifts(targetEmps, weekdayDates, bulkShift);
     setIsBulkModalOpen(false);
   };
+
+  const displayedEmps = showAllRows ? activeEmps : activeEmps.slice(0, 20);
 
   return (
     <div className="p-6 space-y-5 max-w-[1600px] mx-auto select-none">
@@ -346,32 +376,52 @@ export const ShiftScheduleView: React.FC = () => {
             </div>
           </div>
 
-          {/* Sub-toolbar with warnings & shift config */}
-          <div className="px-4 py-2.5 bg-slate-50/60 border-b border-slate-100 flex flex-wrap items-center justify-end gap-2">
-            <button
-              onClick={() =>
-                bulkAssignShifts(
-                  activeEmps.slice(0, 10).map((e) => e.id),
-                  currentWeekDays.slice(0, 5).map((d) => d.date),
-                  'hanh_chinh'
-                )
-              }
-              title="Sao chép ca tuần chuẩn"
-              className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium">
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-              <span>45 cảnh báo</span>
+          {/* Sub-toolbar with AI Auto-Scheduler, warnings & shift config */}
+          <div className="px-4 py-2.5 bg-slate-50/60 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() =>
+                  autoScheduleWeekWithAI(currentWeekDays.map((d) => d.date))
+                }
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white text-xs font-bold shadow-xs transition"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>✨ AI Xếp ca tối ưu (Tự tránh phép)</span>
+              </button>
+              {leaveConflictCount > 0 && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-semibold">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                  <span>{leaveConflictCount} ca trùng ngày nghỉ phép đã duyệt</span>
+                </span>
+              )}
             </div>
-            <button
-              onClick={() => setIsBulkModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700"
-            >
-              <Calendar className="w-3.5 h-3.5 text-slate-500" />
-              <span>Ca &amp; ngày nghỉ</span>
-            </button>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() =>
+                  bulkAssignShifts(
+                    activeEmps.slice(0, 10).map((e) => e.id),
+                    currentWeekDays.slice(0, 5).map((d) => d.date),
+                    'hanh_chinh'
+                  )
+                }
+                title="Sao chép ca tuần chuẩn"
+                className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                <span>45 cảnh báo</span>
+              </div>
+              <button
+                onClick={() => setIsBulkModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700"
+              >
+                <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                <span>Ca &amp; ngày nghỉ</span>
+              </button>
+            </div>
           </div>
 
           {/* Quick Shift Paint Bar (Thanh Xếp nhanh - Exact match to 00:07-00:10 in video) */}
@@ -482,7 +532,7 @@ export const ShiftScheduleView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {activeEmps.slice(0, 20).map((emp) => (
+                {displayedEmps.map((emp) => (
                   <tr
                     key={emp.id}
                     className="hover:bg-slate-50/60 transition group"
@@ -512,6 +562,7 @@ export const ShiftScheduleView: React.FC = () => {
                     {/* 7 Day Shift Cells */}
                     {currentWeekDays.map((day) => {
                       const assigned = getAssignedShift(emp.id, day.date);
+                      const leaveReq = hasApprovedLeaveOnDate(emp.id, day.date);
                       return (
                         <td
                           key={day.date}
@@ -520,7 +571,6 @@ export const ShiftScheduleView: React.FC = () => {
                               setIsMouseDown(true);
                               handleCellPaint(emp.id, day.date);
                             } else {
-                              // Cycle shift if no brush selected
                               const nextCode = assigned ? null : 'hanh_chinh';
                               assignShift(emp.id, day.date, nextCode);
                             }
@@ -536,11 +586,32 @@ export const ShiftScheduleView: React.FC = () => {
                               : 'cursor-pointer hover:bg-slate-100/70'
                           }`}
                         >
-                          {assigned ? (
+                          {assigned && leaveReq ? (
+                            <div className="space-y-1">
+                              <div
+                                className={`w-full py-1 px-2 rounded-lg border text-[11px] font-semibold transition ${assigned.bgClass} ${assigned.textClass} ${assigned.borderClass}`}
+                              >
+                                {assigned.name}
+                              </div>
+                              <div
+                                title={`Nhân viên có đơn ${leaveReq.type} đã duyệt: ${leaveReq.reason}`}
+                                className="w-full py-0.5 px-1.5 rounded-md bg-rose-100 border border-rose-300 text-rose-700 text-[10px] font-bold truncate"
+                              >
+                                ⚠️ Trùng nghỉ phép
+                              </div>
+                            </div>
+                          ) : assigned ? (
                             <div
                               className={`w-full py-1.5 px-2 rounded-lg border text-xs font-semibold transition shadow-2xs ${assigned.bgClass} ${assigned.textClass} ${assigned.borderClass}`}
                             >
                               {assigned.name}
+                            </div>
+                          ) : leaveReq ? (
+                            <div
+                              title={`${leaveReq.type}: ${leaveReq.reason}`}
+                              className="w-full py-1.5 px-2 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 text-[11px] font-semibold truncate"
+                            >
+                              🏖️ Nghỉ phép
                             </div>
                           ) : (
                             <div className="w-full h-8 rounded-lg border border-dashed border-transparent hover:border-slate-300 flex items-center justify-center text-slate-300 hover:text-slate-500 text-xs transition">
@@ -555,6 +626,23 @@ export const ShiftScheduleView: React.FC = () => {
               </tbody>
             </table>
           </div>
+
+          {activeEmps.length > 20 && (
+            <div className="p-3 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span>
+                Đang hiển thị <strong>{displayedEmps.length}</strong> /{' '}
+                <strong>{activeEmps.length}</strong> nhân sự trong phạm vi
+              </span>
+              <button
+                onClick={() => setShowAllRows((prev) => !prev)}
+                className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-semibold transition"
+              >
+                {showAllRows
+                  ? 'Thu gọn (20 dòng đầu)'
+                  : `Xem toàn bộ ${activeEmps.length} nhân sự`}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

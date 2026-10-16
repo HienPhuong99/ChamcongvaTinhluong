@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { CheckCircle2, Info, AlertTriangle, X } from 'lucide-react';
 import { HRMProvider, useHRM } from './context/HRMContext';
 import { Sidebar } from './components/Sidebar';
@@ -11,15 +11,28 @@ import { AttendanceView } from './views/AttendanceView';
 import { RequestsView } from './views/RequestsView';
 import { EmployeesView } from './views/EmployeesView';
 import { TimesheetView } from './views/TimesheetView';
-import { PayrollView } from './views/PayrollView';
-import { ReportsView } from './views/ReportsView';
-import { SettingsView } from './views/SettingsView';
-import { PermissionsView } from './views/PermissionsView';
-import { AuditLogView } from './views/AuditLogView';
 import { InternalNewsView } from './views/InternalNewsView';
 import { DashboardView } from './views/DashboardView';
 import { MyProfileView } from './views/MyProfileView';
-import { MobileAppView } from './views/MobileAppView';
+
+const PayrollView = lazy(() =>
+  import('./views/PayrollView').then((m) => ({ default: m.PayrollView }))
+);
+const ReportsView = lazy(() =>
+  import('./views/ReportsView').then((m) => ({ default: m.ReportsView }))
+);
+const SettingsView = lazy(() =>
+  import('./views/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
+const PermissionsView = lazy(() =>
+  import('./views/PermissionsView').then((m) => ({ default: m.PermissionsView }))
+);
+const AuditLogView = lazy(() =>
+  import('./views/AuditLogView').then((m) => ({ default: m.AuditLogView }))
+);
+const MobileAppView = lazy(() =>
+  import('./views/MobileAppView').then((m) => ({ default: m.MobileAppView }))
+);
 
 const MainShell: React.FC = () => {
   const { activeTab, toasts, dismissToast } = useHRM();
@@ -64,7 +77,17 @@ const MainShell: React.FC = () => {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Topbar />
-        <main className="flex-1 overflow-y-auto">{renderActiveView()}</main>
+        <main className="flex-1 overflow-y-auto">
+          <Suspense
+            fallback={
+              <div className="p-8 flex items-center justify-center text-xs font-semibold text-slate-400">
+                Đang tải phân hệ phuonghihi...
+              </div>
+            }
+          >
+            {renderActiveView()}
+          </Suspense>
+        </main>
       </div>
 
       {/* Global Modals */}

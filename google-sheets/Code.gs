@@ -22,6 +22,37 @@ const SHEET_NAMES = {
 };
 
 /**
+ * Chống tấn công Formula Injection (CWE-1236) khi ghi dữ liệu vào Google Sheets
+ */
+function sanitizeSheetCell(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'number' || typeof val === 'boolean') return val;
+  const str = String(val).slice(0, 1000);
+  if (/^[=+\-@\t\r]/.test(str)) {
+    return "'" + str;
+  }
+  return str;
+}
+
+/**
+ * Chống tấn công HTML Injection / XSS (CWE-79) trong nội dung Email tự động
+ */
+function escapeHtml(val) {
+  if (val === null || val === undefined) return '';
+  return String(val)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function isValidEmail(email) {
+  if (typeof email !== 'string') return false;
+  return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email.trim());
+}
+
+/**
  * Tự động tạo toàn bộ các trang tính (Sheets) và tiêu đề cột chuẩn phuonghihi
  */
 function setupPhuonghihiDatabase() {
@@ -84,7 +115,7 @@ function doGet(e) {
   }
   return jsonResponse({
     ok: true,
-    app: 'phuonghihi Google Sheets Backend',
+    app: 'phuonghihi Google Sheets Backend (Hardened)',
     timestamp: new Date().toISOString(),
   });
 }
@@ -94,18 +125,22 @@ function doGet(e) {
  */
 function doPost(e) {
   try {
-    const payload = JSON.parse(e.postData.contents || '{}');
+    const rawContents = (e && e.postData && e.postData.contents) || '{}';
+    if (rawContents.length > 500000) {
+      return jsonResponse({ ok: false, error: 'Payload exceeds 500KB limit' });
+    }
+    const payload = JSON.parse(rawContents);
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
     if (payload.action === 'LOG_AUDIT') {
       const logSheet = ss.getSheetByName(SHEET_NAMES.AUDIT_LOGS);
       if (logSheet) {
         logSheet.appendRow([
-          payload.timestamp || new Date().toLocaleString('vi-VN'),
-          payload.actor || 'admin@phuonghihi',
-          payload.event || 'SYNC',
-          payload.targetType || 'Hệ thống',
-          payload.targetDetail || '',
+          sanitizeSheetCell(payload.timestamp || new Date().toLocaleString('vi-VN')),
+          sanitizeSheetCell(payload.actor || 'admin@phuonghihi'),
+          sanitizeSheetCell(payload.event || 'SYNC'),
+          sanitizeSheetCell(payload.targetType || 'Hệ thống'),
+          sanitizeSheetCell(payload.targetDetail || ''),
         ]);
       }
       return jsonResponse({ ok: true });
@@ -113,23 +148,26 @@ function doPost(e) {
 
     if (payload.action === 'SEND_PAYSLIP_EMAILS' && Array.isArray(payload.payslips)) {
       let sent = 0;
-      payload.payslips.forEach((p) => {
-        if (p.email) {
+      payload.payslips.slice(0, 100).forEach((p) => {
+        if (isValidEmail(p.email)) {
+          const safePeriod = escapeHtml(p.period);
+          const safeName = escapeHtml(p.name);
+          const safeCode = escapeHtml(p.code);
           MailApp.sendEmail({
-            to: p.email,
-            subject: `[phuonghihi] Phiếu lương kỳ ${p.period} - ${p.name}`,
+            to: p.email.trim(),
+            subject: `[phuonghihi] Phiếu lương kỳ ${safePeriod} - ${safeName}`,
             htmlBody: `
               <div style="font-family: Inter, Arial, sans-serif; max-width: 560px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; padding: 24px;">
-                <h2 style="color: #2563EB; margin-top: 0;">Phiếu lương kỳ ${p.period}</h2>
-                <p>Xin chào <strong>${p.name}</strong> (${p.code}),</p>
-                <p>Phòng Kế toán & Nhân sự gửi bạn chi tiết phiếu lương kỳ <strong>${p.period}</strong>:</p>
+                <h2 style="color: #2563EB; margin-top: 0;">Phiếu lương kỳ ${safePeriod}</h2>
+                <p>Xin chào <strong>${safeName}</strong> (${safeCode}),</p>
+                <p>Phòng Kế toán & Nhân sự gửi bạn chi tiết phiếu lương kỳ <strong>${safePeriod}</strong>:</p>
                 <ul>
-                  <li>Ngày công tính lương: <strong>${p.workDays}/${p.standardDays}</strong></li>
-                  <li>Lương theo ngày công: <strong>${Number(p.proRatedSalary).toLocaleString('vi-VN')} đ</strong></li>
-                  <li>Phụ cấp & Tăng ca & Thưởng: <strong>+${Number(p.additions).toLocaleString('vi-VN')} đ</strong></li>
-                  <li>BHXH (10.5%) & Thuế TNCN & Phạt muộn: <strong>-${Number(p.deductions).toLocaleString('vi-VN')} đ</strong></li>
+                  <li>Ngày công tính lương: <strong>${Number(p.workDays) || 0}/${Number(p.standardDays) || 22}</strong></li>
+                  <li>Lương theo ngày công: <strong>${Number(p.proRatedSalary || 0).toLocaleString('vi-VN')} đ</strong></li>
+                  <li>Phụ cấp & Tăng ca & Thưởng: <strong>+${Number(p.additions || 0).toLocaleString('vi-VN')} đ</strong></li>
+                  <li>BHXH (10.5%) & Thuế TNCN & Phạt muộn: <strong>-${Number(p.deductions || 0).toLocaleString('vi-VN')} đ</strong></li>
                 </ul>
-                <h3 style="color: #0F172A;">Thực lĩnh: <span style="color: #2563EB;">${Number(p.netSalary).toLocaleString('vi-VN')} đ</span></h3>
+                <h3 style="color: #0F172A;">Thực lĩnh: <span style="color: #2563EB;">${Number(p.netSalary || 0).toLocaleString('vi-VN')} đ</span></h3>
               </div>
             `,
           });
@@ -139,9 +177,9 @@ function doPost(e) {
       return jsonResponse({ ok: true, sentCount: sent });
     }
 
-    return jsonResponse({ ok: true, received: payload.action });
-  } catch (err) {
-    return jsonResponse({ ok: false, error: String(err) });
+    return jsonResponse({ ok: true, received: sanitizeSheetCell(payload.action) });
+  } catch {
+    return jsonResponse({ ok: false, error: 'Invalid request payload' });
   }
 }
 

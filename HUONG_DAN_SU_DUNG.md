@@ -77,31 +77,42 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
   - 🟡 **Ca Chiều**: `14:00 – 22:00` (1.0 công)
   - 🟣 **Ca Đêm**: `22:00 – 06:00` (1.0 công)
   - 🔴 **Ca gãy (Chuyên biệt Cửa hàng bán lẻ 08:00 - 21:00)**: `08:00 – 21:00` (1.5 công)
+- **✨ AI Xếp ca tối ưu 1 chạm (Tự tránh phép)**:
+  - Bấm nút **✨ AI Xếp ca tối ưu (Tự tránh phép)** trên thanh công cụ: thuật toán tự động phân bổ ca tuần công bằng cho toàn bộ nhân sự đang làm việc, tự động ưu tiên Ca Sáng / Ca Chiều / Ca Gãy cho đội Kinh doanh - Bán hàng iPhone.
+  - **Cảnh báo xung đột nghỉ phép trực quan**: Những ô ngày mà nhân viên đã có đơn **Nghỉ phép** được duyệt sẽ hiển thị nhãn `🏖️ Nghỉ phép` (nếu chưa xếp ca) hoặc `⚠️ Trùng nghỉ phép` (nếu lỡ xếp ca đè lên ngày nghỉ) và tự động được AI bỏ qua khi xếp lịch.
 - **Cách dùng Bút vẽ xếp ca nhanh (Paint-mode)**:
   1. Bấm chọn một loại ca trên thanh **Xếp nhanh** (hoặc chọn **Xoá ca**).
   2. Bấm chuột hoặc giữ và kéo chuột quét qua các ô ngày của nhân viên trên bảng lịch tuần để gán ca hàng loạt trong vài giây.
   3. Dùng nút **Sao chép tuần trước** để nhân bản lịch tuần cũ sang tuần mới, hoặc bấm vào từng ô để sửa tay từng ngày.
 
-### 2️⃣ Chấm công Điện thoại & Bản đồ GPS Leaflet (`App Mobile` / `?mode=mobile`)
+### 2️⃣ Chấm công Điện thoại, Watermark GPS & Bản đồ Leaflet (`App Mobile` / `?mode=mobile`)
 - **3 Phương thức chấm công**:
   1. **Tại văn phòng (GPS + Bán kính 150m)**: Hệ thống định vị trực tiếp trên bản đồ **Leaflet OpenStreetMap** lấy tâm là **Cửa hàng phuonghihi — 123 Đường Lê Lợi, Quận 1** (`10.7728, 106.6988`). Bạn có thể bật/tắt nút mô phỏng *"Đứng trong cửa hàng (32m)"* hoặc *"Đứng ngoài bán kính (420m)"* để kiểm thử chặn chấm công sai vị trí.
-  2. **Quét mã QR tại quầy**: Nhân viên mở tab **Mã QR của tôi** hoặc quét mã QR động 45 giây hiển thị trên iPad tại quầy thu ngân.
+  2. **Quét mã QR tại quầy (Xác thực Token 64-bit)**: Nhân viên mở tab **Mã QR của tôi** hoặc quét mã QR động 45 giây hiển thị trên iPad tại quầy thu ngân.
   3. **Làm việc từ xa (Remote / Đi thị trường)**: Dành cho nhân sự được bật cờ *Cho phép chấm công từ xa*, yêu cầu nhập lý do/địa điểm khách hàng trước khi bấm **Chấm công vào**.
-- **Tính năng ngay trên App Điện thoại**:
+- **📸 Chụp ảnh Selfie kèm Watermark Thời gian & Tọa độ GPS thực**:
+  - Hỗ trợ bật/tắt xác thực ảnh Selfie có đóng dấu trực tiếp tên nhân viên, mã NV, giờ chấm công và tọa độ GPS `10.7728, 106.6988` để chống chấm công hộ tuyệt đối.
+- **Tính năng ngay trên App Điện thoại (Web PWA & Native Expo Go)**:
   - Bấm nút tròn lớn **Chấm công vào** (`Check-in`) / **Chấm công ra** (`Check-out`).
-  - Gửi nhanh **Đơn xin nghỉ phép / Tăng ca (OT) / Quên chấm công**.
+  - Gửi nhanh **5 loại đơn từ**: **Nghỉ phép**, **Làm thêm giờ (OT)**, **Quên chấm công**, **🔄 Đổi ca trực**, và **💸 Ứng lương nhanh (tối đa 30% lương tích lũy)**.
   - Xem **Phiếu lương cá nhân** và bấm **Phản hồi phiếu lương** nếu có thắc mắc.
 
 ### 3️⃣ Màn hình Kiosk Mã QR tại cửa (`QR tại cửa`)
 - Bấm nút **QR tại cửa** trên thanh Topbar (hoặc chuyển sang tài khoản `iPad Kiosk Quầy Thu Ngân @kiosk.quay`).
-- Màn hình hiển thị mã QR kích thước lớn kèm đồng hồ đếm ngược **45 giây**. Hết 45 giây mã tự động sinh chuỗi token mới để chống nhân viên chụp ảnh màn hình gửi cho nhau chấm hộ.
+- Màn hình hiển thị mã QR kích thước lớn kèm đồng hồ đếm ngược **45 giây**. Hết 45 giây mã tự động sinh chuỗi token 64-bit mới (`PH-DOOR-123LL-...`) để chống nhân viên chụp ảnh màn hình gửi cho nhau chấm hộ.
 
 ### 4️⃣ Quản lý Điểm danh & Nhắc chấm công 1 chạm (`Điểm danh`)
 - Chọn ngày cần theo dõi (mặc định mở ngày có dữ liệu mẫu đầy đủ `09/10/2026`).
 - Hệ thống tự động bóc tách 4 thẻ chỉ số: **Tổng ca trong ngày**, **Đúng giờ**, **Đi muộn**, và **Chưa chấm công**.
 - **Nhắc chấm công tự động**: Bấm nút màu cam **Gửi nhắc nhở người chưa chấm công** → hệ thống gửi thông báo đẩy hàng loạt tới toàn bộ nhân viên có ca nhưng chưa check-in và ghi nhận vào Nhật ký hệ thống.
 
-### 5️⃣ Quản lý Đơn từ, Lịch nghỉ & Số dư phép (`Đơn từ`)
+### 5️⃣ Quản lý Đơn từ, Đổi ca trực, Ứng lương nhanh & Số dư phép (`Đơn từ`)
+- **Hỗ trợ đầy đủ 5 nghiệp vụ đơn từ hiện đại**:
+  1. **Nghỉ phép** (tự động trừ vào quỹ phép năm và cảnh báo trên bảng xếp ca).
+  2. **Làm thêm giờ (OT)** (tự động cộng giờ OT hưởng 150% lương).
+  3. **Quên chấm công** (bổ sung giờ vào/ra bị sót).
+  4. **🔄 Đổi ca trực (Shift Swap)**: Nhân viên chọn ngày muốn đổi, ca mong muốn (`Ca Sáng`, `Ca Chiều`, `Ca Gãy`...) và đồng nghiệp đổi cùng. Khi Quản lý/HR bấm **Duyệt**, bảng phân ca tuần tự động cập nhật ca mới.
+  5. **💸 Ứng lương nhanh (Earned Wage Access — EWA)**: Cho phép nhân viên tạm ứng linh hoạt tới **30% lương cơ bản** ngay trong tháng. Khi bấm **Duyệt**, hệ thống tự động tạo khoản khấu trừ `Tạm ứng lương nhanh qua App` vào Bước 4 của kỳ lương tháng đó.
 - **Tab Danh sách đơn**: Duyệt hoặc từ chối từng đơn chỉ với 1 cú nhấp (`✓ Duyệt` / `✕ Từ chối`), hoặc tích chọn nhiều đơn để **Duyệt hàng loạt**.
 - **Tab Lịch nghỉ công ty**: Hiển thị trực quan trên lịch tháng những ai đang nghỉ phép ngày nào để Quản lý cửa hàng không xếp trùng ca trống quầy.
 - **Tab Số dư phép năm**: Tự động tính **12 ngày phép chuẩn/năm** và **cộng thêm +1 ngày phép cho mỗi 5 năm thâm niên** làm việc tại `phuonghihi`.
@@ -115,19 +126,25 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
   4. **Nhận / Trả việc (Onboarding / Offboarding)**: Bấm 1 nút **Tạo checklist Nhận người mới** hoặc **Tạo checklist Trả việc** để tự động sinh danh sách công việc bàn giao (cấp tài khoản kho IMEI, thu hồi thẻ quầy, đăng xuất thiết bị từ xa...).
   5. **Ghi chú**: Lưu lịch sử đánh giá nhân viên tại cửa hàng.
 
-### 7️⃣ Quy trình Làm lương 5 Bước Tự động (`Làm lương`)
+### 7️⃣ Quy trình Làm lương 5 Bước, Hoa hồng IMEI iPhone & Ủy nhiệm chi Vietcombank (`Làm lương`)
 Chuyển tuần tự qua 5 bước khép kín chỉ trên một màn hình:
 - **Bước 1 — Tổng hợp công**: Tự động gom số công thực tế, ngày phép hưởng lương, số lần/số phút đi muộn và số giờ OT từ bảng chấm công.
 - **Bước 2 — Chốt kỳ công**: Kiểm tra và bấm **Khoá bảng công** để cố định số liệu trước khi tính tiền.
 - **Bước 3 — Khai lương cơ bản & Phụ cấp**: Kiểm tra mức lương hợp đồng, phụ cấp ăn trưa/xăng xe/điện thoại và số người phụ thuộc giảm trừ gia cảnh.
-- **Bước 4 — Tính bảng lương tự động**:
+- **Bước 4 — Tính bảng lương tự động & Tính hoa hồng bán máy iPhone theo IMEI**:
+  - Bấm nút **📱 Tính hoa hồng iPhone / IMEI**: Nhập số máy iPhone bán ra (`150.000đ/máy`), gói bảo hành **AppleCare+** (`200.000đ/gói`) và hồ sơ trả góp duyệt thành công (`80.000đ/hồ sơ`) → tự động cộng vào thưởng doanh số tháng của nhân viên.
   - Tự động tính: `Lương theo ngày công + Phụ cấp + Lương OT (150%) + Thưởng doanh số iPhone`.
-  - Tự động khấu trừ: **BHXH/BHYT/BHTN (`10.5%`)**, **Thuế TNCN lũy tiến** (sau giảm trừ bản thân 11 triệu & người phụ thuộc 4.4 triệu/người), và **Phạt đi muộn theo bậc cấu hình**.
-- **Bước 5 — Chốt & Phát hành phiếu lương**: Bấm **Chốt bảng lương** và **Gửi phiếu lương qua Email / In PDF** cho toàn bộ nhân viên.
+  - Tự động khấu trừ: **BHXH/BHYT/BHTN (`10.5%`)**, **Thuế TNCN lũy tiến** (sau giảm trừ bản thân 11 triệu & người phụ thuộc 4.4 triệu/người), **Tạm ứng lương nhanh (EWA)** và **Phạt đi muộn theo bậc cấu hình**.
+- **Bước 5 — Chốt, Xuất Ủy nhiệm chi Vietcombank & Phát hành phiếu lương**:
+  - Bấm **🏦 Xuất ủy nhiệm chi Vietcombank (`.xlsx`)**: Tải ngay file Excel chuẩn định dạng VCB Digibiz gồm *Số tài khoản nhận, Ngân hàng, Chủ tài khoản, Số tiền thực lĩnh, Nội dung chuyển lương* cho toàn bộ 50 nhân sự.
+  - Bấm **Chốt bảng lương** và **Gửi phiếu lương qua Email / In PDF** cho toàn bộ nhân viên.
 
-### 8️⃣ Các Phân hệ Quản trị & Tiện ích Khác
+### 8️⃣ Các Phân hệ Quản trị, Bảo mật & Tiện ích Khác
 - **Thưởng & Khấu trừ (`Thưởng & khấu trừ`)**: Thêm nhanh các khoản thưởng nóng bán máy iPhone 16 Pro Max, hoa hồng trả góp hoặc khoản phạt vi phạm nội quy.
 - **Báo cáo (`Báo cáo`)**: Xem biểu đồ phân tích tỷ lệ chuyên cần, quỹ lương theo từng bộ phận và xuất báo cáo `CSV / Excel / In PDF`.
 - **Phân quyền & Nhật ký (`Phân quyền`)**: Tuỳ chỉnh ma trận quyền của 6 vai trò và tra cứu **Nhật ký hệ thống (Audit Log)** ghi lại mọi thao tác trên phần mềm.
+- **Bảo mật toàn diện (Tháng 10/2026)**: Tích hợp chống CSV/Excel Formula Injection (CWE-1236), lọc XSS/HTML Injection (CWE-79), chống Prototype Pollution (CWE-1321), Rate-limiting API 120 req/phút, và `0` lỗ hổng bảo mật (`npm audit`).
 - **Phím tắt Tìm kiếm toàn cục (`Ctrl + K`)**: Bấm `Ctrl + K` ở bất kỳ đâu, gõ tiếng Việt **không dấu** (ví dụ: `minh anh`, `hai an`, `bang luong`, `xep ca`) để nhảy thẳng tới nhân viên hoặc màn hình chức năng.
 - **Khôi phục dữ liệu mẫu**: Bấm biểu tượng vòng xoay `↺` ở góc trên bên phải thanh Topbar bất kỳ lúc nào để đưa dữ liệu về trạng thái chuẩn ban đầu.
+- **Báo cáo Kiểm thử, Đối thủ cạnh tranh & Bảo mật chi tiết**: Xem tại [`BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md`](./BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md).
+

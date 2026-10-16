@@ -16,6 +16,8 @@ import {
   RefreshCw,
   Printer,
   X,
+  Smartphone,
+  Landmark,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { PayrollRow } from '../types';
@@ -31,6 +33,9 @@ export const PayrollView: React.FC = () => {
     publishPayslipsForPeriod,
     toggleLockPayrollPeriod,
     addBonusDeduction,
+    addSalesCommissionBatch,
+    addAuditLog,
+    showToast,
     setActiveTab,
   } = useHRM();
 
@@ -43,6 +48,30 @@ export const PayrollView: React.FC = () => {
   const [bonusTitle, setBonusTitle] = useState('Thưởng hiệu suất công việc tháng');
   const [bonusAmount, setBonusAmount] = useState(1500000);
   const [selectedPayslip, setSelectedPayslip] = useState<PayrollRow | null>(null);
+  const [isCommissionModalOpen, setIsCommissionModalOpen] = useState(false);
+  const [showAllRows, setShowAllRows] = useState(false);
+
+  const retailStaff = useMemo(
+    () =>
+      scopedEmployees
+        .filter(
+          (e) =>
+            e.status !== 'Đã nghỉ' &&
+            (e.department === 'Kinh doanh' || e.department === 'Kỹ thuật')
+        )
+        .slice(0, 8),
+    [scopedEmployees]
+  );
+
+  const [commissionRows, setCommissionRows] = useState<
+    Record<string, { iphoneCount: number; appleCareCount: number; installmentCount: number }>
+  >(() => ({
+    NV0003: { iphoneCount: 18, appleCareCount: 9, installmentCount: 7 },
+    NV0004: { iphoneCount: 14, appleCareCount: 6, installmentCount: 5 },
+    NV0005: { iphoneCount: 22, appleCareCount: 11, installmentCount: 9 },
+    NV0008: { iphoneCount: 12, appleCareCount: 5, installmentCount: 4 },
+    NV0009: { iphoneCount: 25, appleCareCount: 14, installmentCount: 10 },
+  }));
 
   const periodState = useMemo(
     () =>
@@ -120,6 +149,52 @@ export const PayrollView: React.FC = () => {
     );
   };
 
+  const handleExportVietcombankBatch = () => {
+    exportToExcel(
+      `Vietcombank_ChuyenKhoanLuong_phuonghihi_${period}.xlsx`,
+      `VCB_Payroll_${period}`,
+      payrollRows.map((row, idx) => {
+        const emp = scopedEmployees.find((e) => e.id === row.employeeId);
+        const accNum = emp?.bankAccount || `007100${String(102938 + idx).padStart(6, '0')}`;
+        return {
+          STT: idx + 1,
+          'Mã NV': emp?.code || row.employeeId,
+          'Chủ tài khoản thụ hưởng': (emp?.name || row.employeeId).toUpperCase(),
+          'Số tài khoản nhận': accNum,
+          'Ngân hàng thụ hưởng': emp?.bankName || 'Vietcombank - CN TP.HCM',
+          'Số tiền chuyển khoản (VNĐ)': row.netSalary,
+          'Nội dung chuyển khoản': `PHUONGHIHI THANH TOAN LUONG KY ${period} NV ${emp?.code || row.employeeId}`,
+        };
+      })
+    );
+    addAuditLog(
+      'Xuất lệnh chi lương Vietcombank',
+      'Bảng lương',
+      `Kỳ ${period} · ${payrollRows.length} tài khoản thụ hưởng`
+    );
+    showToast(
+      `Đã xuất bảng kê chuyển khoản Vietcombank kỳ ${period}!`,
+      `File Excel chuẩn lô uỷ nhiệm chi cho ${payrollRows.length} nhân viên.`
+    );
+  };
+
+  const handleApplyCommissionBatch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const payload = retailStaff.map((emp, idx) => {
+      const entry = commissionRows[emp.id] || {
+        iphoneCount: 10 + (idx % 5) * 2,
+        appleCareCount: 4 + (idx % 3),
+        installmentCount: 3 + (idx % 4),
+      };
+      return {
+        employeeId: emp.id,
+        ...entry,
+      };
+    });
+    addSalesCommissionBatch(period, payload);
+    setIsCommissionModalOpen(false);
+  };
+
   const handleDeclareSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const targetEmp = missingSalaryEmps[0];
@@ -141,6 +216,8 @@ export const PayrollView: React.FC = () => {
     setIsBonusModalOpen(false);
   };
 
+  const displayedPayrollRows = showAllRows ? payrollRows : payrollRows.slice(0, 20);
+
   return (
     <div className="p-6 space-y-5 max-w-[1600px] mx-auto">
       {/* Header (Matches 00:48 in video) */}
@@ -150,7 +227,7 @@ export const PayrollView: React.FC = () => {
         </div>
         <h1 className="text-2xl font-bold text-slate-900 mt-0.5">Bảng lương</h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Lương theo công, bảo hiểm, thuế và phiếu lương.
+          Lương theo công, hoa hồng bán lẻ iPhone, bảo hiểm, thuế và phiếu lương.
         </p>
       </div>
 
@@ -201,6 +278,20 @@ export const PayrollView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setIsCommissionModalOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-xs font-bold text-indigo-700 shadow-2xs transition cursor-pointer"
+          >
+            <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Tính hoa hồng bán iPhone</span>
+          </button>
+          <button
+            onClick={handleExportVietcombankBatch}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-xs font-bold text-emerald-800 shadow-2xs transition cursor-pointer"
+          >
+            <Landmark className="w-3.5 h-3.5 text-emerald-700" />
+            <span>Xuất ủy nhiệm chi Vietcombank</span>
+          </button>
           <button
             onClick={handleExportCSV}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs"
@@ -429,7 +520,7 @@ export const PayrollView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
-              {payrollRows.slice(0, 20).map((row) => {
+              {displayedPayrollRows.map((row) => {
                 const emp = scopedEmployees.find(
                   (e) => e.id === row.employeeId
                 );
@@ -487,7 +578,168 @@ export const PayrollView: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {payrollRows.length > 20 && (
+          <div className="p-3 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>
+              Đang hiển thị <strong>{displayedPayrollRows.length}</strong> /{' '}
+              <strong>{payrollRows.length}</strong> phiếu lương nhân sự
+            </span>
+            <button
+              onClick={() => setShowAllRows((prev) => !prev)}
+              className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-semibold transition"
+            >
+              {showAllRows
+                ? 'Thu gọn (20 dòng đầu)'
+                : `Xem toàn bộ ${payrollRows.length} phiếu lương`}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Retail iPhone Commission Calculator Modal */}
+      {isCommissionModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setIsCommissionModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <Smartphone className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Tính hoa hồng bán lẻ iPhone &amp; IMEI — Kỳ {period}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Đơn giá chuẩn Cửa hàng phuonghihi: 150.000đ/máy iPhone · 200.000đ/gói AppleCare+ · 80.000đ/HS trả góp
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsCommissionModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleApplyCommissionBatch} className="space-y-4 mt-4">
+              <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-xl">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase text-slate-500">
+                      <th className="py-2.5 px-3">Nhân viên KD / Kỹ thuật</th>
+                      <th className="py-2.5 px-2 text-center">Máy iPhone</th>
+                      <th className="py-2.5 px-2 text-center">Gói AppleCare+</th>
+                      <th className="py-2.5 px-2 text-center">HS Trả góp</th>
+                      <th className="py-2.5 px-3 text-right">Thành tiền hoa hồng</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {retailStaff.map((emp, idx) => {
+                      const val = commissionRows[emp.id] || {
+                        iphoneCount: 10 + (idx % 5) * 2,
+                        appleCareCount: 4 + (idx % 3),
+                        installmentCount: 3 + (idx % 4),
+                      };
+                      const total =
+                        val.iphoneCount * 150000 +
+                        val.appleCareCount * 200000 +
+                        val.installmentCount * 80000;
+                      return (
+                        <tr key={emp.id} className="hover:bg-slate-50">
+                          <td className="py-2 px-3">
+                            <div className="font-bold text-slate-800">{emp.name}</div>
+                            <div className="text-[10px] text-slate-400">
+                              {emp.code} · {emp.department}
+                            </div>
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <input
+                              type="number"
+                              min={0}
+                              value={val.iphoneCount}
+                              onChange={(e) =>
+                                setCommissionRows((prev) => ({
+                                  ...prev,
+                                  [emp.id]: {
+                                    ...val,
+                                    iphoneCount: Number(e.target.value) || 0,
+                                  },
+                                }))
+                              }
+                              className="w-16 px-2 py-1 text-center rounded-lg border border-slate-200 text-xs font-semibold"
+                            />
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <input
+                              type="number"
+                              min={0}
+                              value={val.appleCareCount}
+                              onChange={(e) =>
+                                setCommissionRows((prev) => ({
+                                  ...prev,
+                                  [emp.id]: {
+                                    ...val,
+                                    appleCareCount: Number(e.target.value) || 0,
+                                  },
+                                }))
+                              }
+                              className="w-16 px-2 py-1 text-center rounded-lg border border-slate-200 text-xs font-semibold"
+                            />
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <input
+                              type="number"
+                              min={0}
+                              value={val.installmentCount}
+                              onChange={(e) =>
+                                setCommissionRows((prev) => ({
+                                  ...prev,
+                                  [emp.id]: {
+                                    ...val,
+                                    installmentCount: Number(e.target.value) || 0,
+                                  },
+                                }))
+                              }
+                              className="w-16 px-2 py-1 text-center rounded-lg border border-slate-200 text-xs font-semibold"
+                            />
+                          </td>
+                          <td className="py-2 px-3 text-right font-bold text-emerald-700">
+                            +{formatVND(total)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCommissionModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs"
+                >
+                  Áp dụng hoa hồng vào Bảng lương
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Declare Base Salary Modal */}
       {isDeclareModalOpen && (
@@ -710,7 +962,7 @@ export const PayrollView: React.FC = () => {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Thưởng trong kỳ:</span>
+                  <span className="text-slate-500">Thưởng &amp; Hoa hồng bán iPhone:</span>
                   <span className="font-semibold text-emerald-700">
                     +{formatVND(selectedPayslip.bonus)}
                   </span>

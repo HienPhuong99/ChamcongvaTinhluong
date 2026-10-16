@@ -32,6 +32,8 @@ export const RequestsView: React.FC = () => {
   const [newStart, setNewStart] = useState('12/10/2026');
   const [newEnd, setNewEnd] = useState('13/10/2026');
   const [newReason, setNewReason] = useState('');
+  const [newTargetShift, setNewTargetShift] = useState<'sang' | 'chieu' | 'hanh_chinh' | 'ca_gay'>('sang');
+  const [newAdvanceAmount, setNewAdvanceAmount] = useState<number>(3000000);
 
   const scopedRequests = useMemo(() => {
     const empSet = new Set(scopedEmployees.map((e) => e.id));
@@ -66,6 +68,8 @@ export const RequestsView: React.FC = () => {
       endDate: newEnd,
       reason: newReason,
       days: 1,
+      targetShiftCode: newType === 'Đổi ca trực' ? newTargetShift : undefined,
+      advanceAmount: newType === 'Ứng lương nhanh' ? newAdvanceAmount : undefined,
     });
     setNewReason('');
     setIsNewModalOpen(false);
@@ -161,7 +165,17 @@ export const RequestsView: React.FC = () => {
                         className="hover:bg-slate-50/70 transition"
                       >
                         <td className="py-3.5 px-5 font-bold text-slate-900">
-                          {req.type}
+                          <div>{req.type}</div>
+                          {req.type === 'Đổi ca trực' && req.targetShiftCode && (
+                            <span className="inline-flex items-center mt-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-semibold">
+                              🔄 Đổi sang ca: {req.targetShiftCode.toUpperCase()}
+                            </span>
+                          )}
+                          {req.type === 'Ứng lương nhanh' && req.advanceAmount && (
+                            <span className="inline-flex items-center mt-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold">
+                              💸 Tạm ứng: {req.advanceAmount.toLocaleString('vi-VN')} ₫
+                            </span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4">
                           <div className="flex items-center gap-2.5">
@@ -490,6 +504,8 @@ export const RequestsView: React.FC = () => {
                 >
                   {[
                     'Nghỉ phép năm',
+                    'Đổi ca trực',
+                    'Ứng lương nhanh',
                     'Công tác',
                     'Nghỉ ốm',
                     'Đăng ký tăng ca',
@@ -502,6 +518,43 @@ export const RequestsView: React.FC = () => {
                   ))}
                 </select>
               </div>
+              {newType === 'Đổi ca trực' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Ca muốn đổi sang
+                  </label>
+                  <select
+                    value={newTargetShift}
+                    onChange={(e) =>
+                      setNewTargetShift(
+                        e.target.value as 'sang' | 'chieu' | 'hanh_chinh' | 'ca_gay'
+                      )
+                    }
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold bg-indigo-50/50 text-indigo-900"
+                  >
+                    <option value="sang">Ca Sáng (06:00 - 14:00)</option>
+                    <option value="chieu">Ca Chiều (14:00 - 22:00)</option>
+                    <option value="hanh_chinh">Hành chính (08:00 - 17:30)</option>
+                    <option value="ca_gay">Ca gãy (08:00 - 21:00)</option>
+                  </select>
+                </div>
+              )}
+              {newType === 'Ứng lương nhanh' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Số tiền tạm ứng trước (Tối đa 30% lương tích lũy)
+                  </label>
+                  <input
+                    type="number"
+                    step={500000}
+                    min={500000}
+                    max={10000000}
+                    value={newAdvanceAmount}
+                    onChange={(e) => setNewAdvanceAmount(Number(e.target.value))}
+                    className="w-full px-3.5 py-2 rounded-xl border border-emerald-300 bg-emerald-50/40 text-xs font-bold text-emerald-800"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">

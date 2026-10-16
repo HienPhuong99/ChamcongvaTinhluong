@@ -117,7 +117,9 @@ export type RequestType =
   | 'Đăng ký tăng ca'
   | 'Bổ sung chấm công'
   | 'Đi muộn / về sớm'
-  | 'Nghỉ phép năm';
+  | 'Nghỉ phép năm'
+  | 'Đổi ca trực'
+  | 'Ứng lương nhanh';
 
 export type RequestStatus = 'Đang chờ' | 'Đã duyệt' | 'Từ chối';
 
@@ -134,6 +136,10 @@ export interface LeaveOrOtRequest {
   checkInTime?: string;
   checkOutTime?: string;
   days?: number;
+  swapWithEmployeeId?: string;
+  swapShiftCode?: ShiftCode;
+  targetShiftCode?: ShiftCode;
+  advanceAmount?: number;
 }
 
 export interface LeaveBalance {
@@ -166,6 +172,7 @@ export interface BonusDeductionItem {
   type: 'Thưởng' | 'Khấu trừ';
   title: string;
   amount: number;
+  date?: string;
 }
 
 export interface PayrollRow {

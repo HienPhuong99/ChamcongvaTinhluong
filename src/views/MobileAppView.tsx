@@ -35,10 +35,16 @@ export const MobileAppView: React.FC = () => {
     'checkin'
   );
   const [personalQrUrl, setPersonalQrUrl] = useState<string>('');
-  const [reqType, setReqType] = useState<'Nghỉ phép năm' | 'Đăng ký tăng ca' | 'Bổ sung chấm công'>(
-    'Nghỉ phép năm'
-  );
+  const [reqType, setReqType] = useState<
+    | 'Nghỉ phép năm'
+    | 'Đổi ca trực'
+    | 'Ứng lương nhanh'
+    | 'Đăng ký tăng ca'
+    | 'Bổ sung chấm công'
+  >('Nghỉ phép năm');
   const [reqReason, setReqReason] = useState('');
+  const [reqTargetShift, setReqTargetShift] = useState<'sang' | 'chieu' | 'hanh_chinh' | 'ca_gay'>('sang');
+  const [reqAdvanceAmount, setReqAdvanceAmount] = useState<number>(3000000);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -161,7 +167,7 @@ export const MobileAppView: React.FC = () => {
       distanceMeters,
       gpsAccuracy: 12,
       note: isInRange
-        ? `Chấm công GPS tại ${settings.officeName}`
+        ? `Chấm công GPS tại ${settings.officeName} [Watermark: ${clockStr} · ±12m]`
         : 'Chấm công ngoài phạm vi (Làm việc từ xa)',
     });
   };
@@ -177,6 +183,8 @@ export const MobileAppView: React.FC = () => {
       reason: reqReason,
       days: 1,
       otHours: reqType === 'Đăng ký tăng ca' ? 2 : undefined,
+      targetShiftCode: reqType === 'Đổi ca trực' ? reqTargetShift : undefined,
+      advanceAmount: reqType === 'Ứng lương nhanh' ? reqAdvanceAmount : undefined,
     });
     setReqReason('');
     setMobileSubTab('checkin');
@@ -251,9 +259,9 @@ export const MobileAppView: React.FC = () => {
                 {/* Big Round Blue Check-in Button */}
                 <button
                   onClick={handleMobileCheckIn}
-                  className="my-5 w-40 h-40 rounded-full bg-gradient-to-b from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-95 text-white shadow-xl shadow-blue-500/30 flex flex-col items-center justify-center gap-2 transition cursor-pointer border-4 border-blue-100"
+                  className="my-4 w-36 h-36 rounded-full bg-gradient-to-b from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 active:scale-95 text-white shadow-xl shadow-blue-500/30 flex flex-col items-center justify-center gap-2 transition cursor-pointer border-4 border-blue-100"
                 >
-                  <Camera className="w-8 h-8 text-white" />
+                  <Camera className="w-7 h-7 text-white" />
                   <span className="text-sm font-bold tracking-wide">
                     {todayRecord?.checkIn && !todayRecord?.checkOut
                       ? 'Chấm công ra'
@@ -261,9 +269,15 @@ export const MobileAppView: React.FC = () => {
                   </span>
                 </button>
 
+                {/* Live Camera Selfie GPS Watermark Badge */}
+                <div className="mb-3 w-full py-1.5 px-2.5 rounded-xl bg-slate-900 text-white text-[10px] font-mono flex items-center justify-between">
+                  <span>📸 {currentEmp?.code} · 123 Lê Lợi, Q.1</span>
+                  <span className="text-emerald-400 font-bold">GPS ±12m · {clockStr}</span>
+                </div>
+
                 {/* Embedded Leaflet OpenStreetMap */}
                 <div className="w-full rounded-2xl overflow-hidden border border-slate-200 shadow-inner">
-                  <div ref={mapContainerRef} className="w-full h-40 z-0" />
+                  <div ref={mapContainerRef} className="w-full h-36 z-0" />
                 </div>
 
                 {/* Distance & GPS Accuracy Pill (Exact match to 00:15 in video) */}
@@ -294,7 +308,7 @@ export const MobileAppView: React.FC = () => {
                 Mã QR định danh của tôi
               </div>
               <p className="text-xs text-slate-500">
-                Đưa mã này cho Quản lý quét tại công trường / kho bãi hoặc quét mã QR tại cửa.
+                Đưa mã này cho Quản lý quét tại quầy cửa hàng hoặc quét mã QR động 45s tại cửa.
               </p>
               {personalQrUrl && (
                 <img
@@ -321,7 +335,7 @@ export const MobileAppView: React.FC = () => {
               className="bg-white rounded-3xl border border-slate-200 p-5 space-y-3"
             >
               <div className="text-sm font-bold text-slate-900">
-                Gửi đơn từ nhanh trên điện thoại
+                Gửi đơn từ &amp; Đổi ca / Ứng lương nhanh
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">
@@ -330,13 +344,52 @@ export const MobileAppView: React.FC = () => {
                 <select
                   value={reqType}
                   onChange={(e) => setReqType(e.target.value as typeof reqType)}
-                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50"
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50 font-semibold"
                 >
-                  <option value="Nghỉ phép năm">Nghỉ phép năm</option>
-                  <option value="Đăng ký tăng ca">Đăng ký tăng ca</option>
-                  <option value="Bổ sung chấm công">Bổ sung chấm công</option>
+                  <option value="Nghỉ phép năm">🏖️ Nghỉ phép năm</option>
+                  <option value="Đổi ca trực">🔄 Đổi ca trực cửa hàng</option>
+                  <option value="Ứng lương nhanh">💸 Ứng lương nhanh (EWA tới 30%)</option>
+                  <option value="Đăng ký tăng ca">⏱️ Đăng ký tăng ca (OT)</option>
+                  <option value="Bổ sung chấm công">📝 Bổ sung chấm công</option>
                 </select>
               </div>
+              {reqType === 'Đổi ca trực' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Ca muốn đổi sang
+                  </label>
+                  <select
+                    value={reqTargetShift}
+                    onChange={(e) =>
+                      setReqTargetShift(
+                        e.target.value as 'sang' | 'chieu' | 'hanh_chinh' | 'ca_gay'
+                      )
+                    }
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-indigo-200 bg-indigo-50/50 font-semibold text-indigo-900"
+                  >
+                    <option value="sang">Ca Sáng (06:00 - 14:00)</option>
+                    <option value="chieu">Ca Chiều (14:00 - 22:00)</option>
+                    <option value="hanh_chinh">Hành chính (08:00 - 17:30)</option>
+                    <option value="ca_gay">Ca gãy (08:00 - 21:00)</option>
+                  </select>
+                </div>
+              )}
+              {reqType === 'Ứng lương nhanh' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Số tiền ứng trước (VNĐ)
+                  </label>
+                  <input
+                    type="number"
+                    step={500000}
+                    min={500000}
+                    max={8000000}
+                    value={reqAdvanceAmount}
+                    onChange={(e) => setReqAdvanceAmount(Number(e.target.value) || 2000000)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-emerald-300 bg-emerald-50/50 font-bold text-emerald-800"
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">
                   Lý do chi tiết
@@ -346,7 +399,7 @@ export const MobileAppView: React.FC = () => {
                   required
                   value={reqReason}
                   onChange={(e) => setReqReason(e.target.value)}
-                  placeholder="Nhập lý do xin nghỉ / tăng ca / bổ sung công..."
+                  placeholder="Nhập lý do xin nghỉ / đổi ca / ứng lương..."
                   className="w-full p-3 text-xs rounded-xl border border-slate-200"
                 />
               </div>
@@ -402,6 +455,17 @@ export const MobileAppView: React.FC = () => {
                       {formatVND(myPayslip.netSalary)}
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReqType('Ứng lương nhanh');
+                      setReqReason('Ứng trước 3.000.000đ trên số công tích lũy thực tế tháng 10/2026');
+                      setMobileSubTab('quick_req');
+                    }}
+                    className="w-full mt-2 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition"
+                  >
+                    💸 Ứng lương nhanh 24/7 (Tới 30% lương)
+                  </button>
                 </div>
               ) : (
                 <p className="text-xs text-slate-500">Chưa có dữ liệu phiếu lương.</p>

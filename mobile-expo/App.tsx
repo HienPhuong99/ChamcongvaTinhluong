@@ -871,6 +871,19 @@ export default function App() {
                   {formatVND(payrollSummary.net)}
                 </Text>
               </View>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setNewReqType('Ứng lương nhanh');
+                  setNewReqReason('Ứng trước 3.000.000đ trên số công tích lũy thực tế tháng 10/2026');
+                  setIsNewReqModal(true);
+                }}
+                style={[styles.primaryBtn, { marginTop: 12, backgroundColor: '#059669' }]}
+              >
+                <Text style={styles.primaryBtnText}>
+                  💸 Ứng lương nhanh 24/7 (Tới 30% lương)
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -880,9 +893,15 @@ export default function App() {
       <Modal visible={isNewReqModal} transparent animationType="slide">
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.cardHeaderTitle}>Tạo đơn từ mới</Text>
+            <Text style={styles.cardHeaderTitle}>Tạo đơn từ &amp; Đổi ca / Ứng lương</Text>
             <View style={styles.brushWrap}>
-              {['Nghỉ phép năm', 'Đăng ký tăng ca', 'Bổ sung chấm công'].map(
+              {[
+                'Nghỉ phép năm',
+                'Đổi ca trực',
+                'Ứng lương nhanh',
+                'Đăng ký tăng ca',
+                'Bổ sung chấm công',
+              ].map(
                 (t) => (
                   <TouchableOpacity
                     key={t}
