@@ -1,3 +1,5 @@
+import type { NavTabId, RoleId } from '../types';
+
 /**
  * Bounded LRU-style memoization cache for Vietnamese accent stripping
  */
@@ -37,13 +39,14 @@ export function matchesSearch(text: string, query: string): boolean {
 
 /**
  * Sanitizes free-text user input to defend against XSS / script payloads (CWE-79)
+ * without corrupting legitimate prose containing '='
  */
 export function sanitizeTextInput(input: string, maxLength = 500): string {
   if (!input) return '';
   return String(input)
     .replace(/<\s*\/?\s*script[^>]*>/gi, '')
+    .replace(/<\s*\/?\s*(iframe|object|embed|svg|math|style|link|meta)[^>]*>/gi, '')
     .replace(/javascript\s*:/gi, '')
-    .replace(/on\w+\s*=/gi, '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
     .trim()
     .slice(0, maxLength);
@@ -63,11 +66,11 @@ export function sanitizeSpreadsheetValue(val: string | number | unknown): string
 }
 
 /**
- * Cryptographic-style keyed FNV-1a 64-bit hex signature for 45-second Kiosk QR tokens (CWE-294)
+ * Cryptographic-style keyed FNV-1a 64-bit hex signature for 45-second Kiosk QR tokens & Personal QR (CWE-294)
  */
 const KIOSK_QR_SECRET = 'PHUONGHIHI_123_LE_LOI_Q1_SECRET_2026';
 
-function computeKeyedSignature(payload: string): string {
+export function computeKeyedSignature(payload: string): string {
   const input = `${KIOSK_QR_SECRET}::${payload}::${KIOSK_QR_SECRET}`;
   let h1 = 0xdeadbeef ^ input.length;
   let h2 = 0x41c6ce57 ^ input.length;
@@ -89,26 +92,357 @@ export function generateDoorQrToken(nowMs = Date.now()): string {
   return `PH-123LELOI-${slot}-${sig}`;
 }
 
-export function verifyDoorQrToken(token: string, nowMs = Date.now()): { valid: boolean; reason?: string } {
+export function verifyDoorQrToken(
+  token: string,
+  nowMs = Date.now()
+): { valid: boolean; reason?: string; error?: string } {
   const clean = (token || '').trim().toUpperCase();
   const parts = clean.split('-');
   if (parts.length !== 4 || parts[0] !== 'PH' || parts[1] !== '123LELOI') {
-    return { valid: false, reason: 'Định dạng mã QR không hợp lệ' };
+    const msg = 'Định dạng mã QR không hợp lệ';
+    return { valid: false, reason: msg, error: msg };
   }
   const slot = Number(parts[2]);
   const providedSig = parts[3];
   if (!Number.isInteger(slot) || !providedSig) {
-    return { valid: false, reason: 'Mã QR thiếu chữ ký bảo mật' };
+    const msg = 'Mã QR thiếu chữ ký bảo mật';
+    return { valid: false, reason: msg, error: msg };
   }
   const expectedSig = computeKeyedSignature(`SLOT-${slot}`).slice(0, 10);
   if (providedSig !== expectedSig) {
-    return { valid: false, reason: 'Chữ ký mã QR không khớp (nghi vấn giả mạo)' };
+    const msg = 'Chữ ký mã QR không khớp (nghi vấn giả mạo)';
+    return { valid: false, reason: msg, error: msg };
   }
   const currentSlot = Math.floor(nowMs / 45000);
   if (Math.abs(currentSlot - slot) > 1) {
-    return { valid: false, reason: 'Mã QR đã hết hạn sau 45 giây (chống chụp ảnh màn hình)' };
+    const msg = 'Mã QR đã hết hạn sau 45 giây (chống chụp ảnh màn hình)';
+    return { valid: false, reason: msg, error: msg };
   }
   return { valid: true };
+}
+
+export function generatePersonalQrPayload(
+  empCode: string,
+  empName = '',
+  dept = '',
+  nowMs = Date.now()
+): string {
+  const slot = Math.floor(nowMs / 60000); // 60s rolling window
+  const sig = computeKeyedSignature(`EMP-${empCode}-${slot}`).slice(0, 12);
+  return JSON.stringify({
+    type: 'PHUONGHIHI_EMP_QR',
+    empCode,
+    empName,
+    dept,
+    slot,
+    sig,
+  });
+}
+
+export function verifyPersonalQrPayload(
+  rawJson: string,
+  nowMs = Date.now()
+): { valid: boolean; empCode?: string; reason?: string; error?: string } {
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!parsed || parsed.type !== 'PHUONGHIHI_EMP_QR' || !parsed.empCode || !parsed.sig) {
+      const msg = 'Mã QR cá nhân không đúng định dạng phuonghihi';
+      return { valid: false, reason: msg, error: msg };
+    }
+    const slot = Number(parsed.slot);
+    const expectedSig = computeKeyedSignature(`EMP-${parsed.empCode}-${slot}`).slice(0, 12);
+    if (parsed.sig !== expectedSig) {
+      const msg = 'Chữ ký mã QR cá nhân không hợp lệ (nghi vấn giả mạo)';
+      return { valid: false, reason: msg, error: msg };
+    }
+    const currentSlot = Math.floor(nowMs / 60000);
+    if (Math.abs(currentSlot - slot) > 5) {
+      const msg = 'Mã QR cá nhân đã quá hạn 5 phút';
+      return { valid: false, reason: msg, error: msg };
+    }
+    return { valid: true, empCode: String(parsed.empCode) };
+  } catch {
+    const msg = 'Dữ liệu QR không hợp lệ';
+    return { valid: false, reason: msg, error: msg };
+  }
+}
+
+/**
+ * Date & Time Helpers (Local timezone safe)
+ */
+export function getTodayIsoDate(now = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function formatIsoToVN(isoDate: string): string {
+  if (!isoDate) return '';
+  const trimmed = isoDate.trim();
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) return trimmed;
+  const parts = trimmed.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return trimmed;
+}
+
+export function normalizeToIsoDate(dateStr: string): string {
+  if (!dateStr) return '';
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const parts = trimmed.split('/');
+  if (parts.length === 3) {
+    const [d, m, y] = parts;
+    if (!d || !m || !y || y.length !== 4) return '';
+    const dayNum = Number(d);
+    const monthNum = Number(m);
+    const yearNum = Number(y);
+    if (
+      !Number.isInteger(dayNum) ||
+      !Number.isInteger(monthNum) ||
+      !Number.isInteger(yearNum) ||
+      monthNum < 1 ||
+      monthNum > 12 ||
+      dayNum < 1 ||
+      dayNum > 31
+    ) {
+      return '';
+    }
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  return '';
+}
+
+export function parseIsoDateLocal(isoDate: string): Date {
+  const normalized = normalizeToIsoDate(isoDate) || getTodayIsoDate();
+  const [y, m, d] = normalized.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);
+}
+
+export function formatVietnameseDayHeader(isoDate: string): string {
+  const dt = parseIsoDateLocal(isoDate);
+  const dayNames = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+  return `${dayNames[dt.getDay()]}, ${formatIsoToVN(isoDate)}`;
+}
+
+export function getGreetingByHour(hour = new Date().getHours()): string {
+  if (hour < 12) return 'Chào buổi sáng';
+  if (hour < 18) return 'Chào buổi chiều';
+  return 'Chào buổi tối';
+}
+
+export function calculateInclusiveDays(startStr: string, endStr: string): number {
+  const startIso = normalizeToIsoDate(startStr);
+  const endIso = normalizeToIsoDate(endStr || startStr);
+  if (!startIso || !endIso) return 0;
+  if (endIso < startIso) return -1;
+  const startDt = parseIsoDateLocal(startIso);
+  const endDt = parseIsoDateLocal(endIso);
+  const diffDays = Math.round((endDt.getTime() - startDt.getTime()) / (1000 * 60 * 60 * 24));
+  return diffDays + 1;
+}
+
+export function isDateExpired(expiresAtStr?: string, todayIso = getTodayIsoDate()): boolean {
+  if (!expiresAtStr) return false;
+  const expIso = normalizeToIsoDate(expiresAtStr);
+  if (!expIso) return false;
+  return expIso < todayIso;
+}
+
+export function normalizePeriodKey(periodStr: string): string {
+  if (!periodStr) return '2026-10';
+  const trimmed = periodStr.trim();
+  if (/^\d{4}-\d{2}$/.test(trimmed)) return trimmed;
+  const slashParts = trimmed.split('/');
+  if (slashParts.length === 2) {
+    const [m, y] = slashParts;
+    if (y.length === 4) return `${y}-${m.padStart(2, '0')}`;
+  }
+  return trimmed;
+}
+
+export function derivePeriodFromDate(dateStr: string, fallback = '2026-10'): string {
+  const iso = normalizeToIsoDate(dateStr);
+  if (iso && iso.length >= 7) {
+    return iso.slice(0, 7);
+  }
+  return normalizePeriodKey(fallback);
+}
+
+/**
+ * Progressive 7-bracket Personal Income Tax (Biểu thuế TNCN luỹ tiến từng phần 7 bậc Việt Nam)
+ */
+export function calculateProgressivePIT(taxableIncome: number): number {
+  if (taxableIncome <= 0) return 0;
+  if (taxableIncome <= 5_000_000) {
+    return Math.round(taxableIncome * 0.05);
+  }
+  if (taxableIncome <= 10_000_000) {
+    return Math.round(taxableIncome * 0.1 - 250_000);
+  }
+  if (taxableIncome <= 18_000_000) {
+    return Math.round(taxableIncome * 0.15 - 750_000);
+  }
+  if (taxableIncome <= 32_000_000) {
+    return Math.round(taxableIncome * 0.2 - 1_650_000);
+  }
+  if (taxableIncome <= 52_000_000) {
+    return Math.round(taxableIncome * 0.25 - 3_250_000);
+  }
+  if (taxableIncome <= 80_000_000) {
+    return Math.round(taxableIncome * 0.3 - 5_850_000);
+  }
+  return Math.round(taxableIncome * 0.35 - 9_850_000);
+}
+
+export function parseTimeToMinutes(timeStr?: string): number | null {
+  if (!timeStr || !/^\d{1,2}:\d{2}$/.test(timeStr.trim())) return null;
+  const [hh, mm] = timeStr.trim().split(':').map(Number);
+  if (isNaN(hh) || isNaN(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+export function calculateCheckInLateAndOt(
+  checkInOrOpts?:
+    | string
+    | {
+        checkIn?: string;
+        checkOut?: string;
+        shiftStart?: string;
+        shiftEnd?: string;
+        graceMinutes?: number;
+      },
+  checkOutArg?: string,
+  shiftStartArg = '08:00',
+  shiftEndArg = '17:30'
+): { lateMinutes: number; otHours: number; status: 'Đúng giờ' | 'Đi muộn' } {
+  const isObj = typeof checkInOrOpts === 'object' && checkInOrOpts !== null;
+  const checkIn = isObj ? checkInOrOpts.checkIn : checkInOrOpts;
+  const checkOut = isObj ? checkInOrOpts.checkOut : checkOutArg;
+  const shiftStart = (isObj ? checkInOrOpts.shiftStart : shiftStartArg) || '08:00';
+  const shiftEnd = (isObj ? checkInOrOpts.shiftEnd : shiftEndArg) || '17:30';
+  const graceMinutes = isObj ? Number(checkInOrOpts.graceMinutes) || 0 : 0;
+
+  const inMins = parseTimeToMinutes(checkIn);
+  const startMins = parseTimeToMinutes(shiftStart) ?? 480;
+  const outMins = parseTimeToMinutes(checkOut);
+  const endMins = parseTimeToMinutes(shiftEnd) ?? 1050;
+
+  let lateMinutes = 0;
+  if (inMins !== null && inMins > startMins + graceMinutes) {
+    lateMinutes = inMins - startMins;
+  }
+
+  let otHours = 0;
+  if (outMins !== null) {
+    // Handle overnight shift where endMins < startMins
+    const adjustedOut = outMins < startMins && endMins < startMins ? outMins + 1440 : outMins;
+    const adjustedEnd = endMins < startMins ? endMins + 1440 : endMins;
+    if (adjustedOut > adjustedEnd + 15) {
+      otHours = Math.round(((adjustedOut - adjustedEnd) / 60) * 2) / 2;
+    }
+  }
+
+  return {
+    lateMinutes,
+    otHours,
+    status: lateMinutes > 0 ? 'Đi muộn' : 'Đúng giờ',
+  };
+}
+
+/**
+ * RBAC Permission Helpers
+ */
+const ROLE_ALLOWED_TABS: Record<RoleId, NavTabId[]> = {
+  super_admin: [
+    'dashboard',
+    'news',
+    'employees',
+    'shifts',
+    'attendance',
+    'requests',
+    'timesheet',
+    'payroll',
+    'reports',
+    'my_profile',
+    'settings',
+    'permissions',
+    'audit_log',
+    'mobile_app',
+  ],
+  hr: [
+    'dashboard',
+    'news',
+    'employees',
+    'shifts',
+    'attendance',
+    'requests',
+    'timesheet',
+    'reports',
+    'my_profile',
+    'mobile_app',
+  ],
+  accountant: [
+    'dashboard',
+    'news',
+    'timesheet',
+    'payroll',
+    'reports',
+    'requests',
+    'my_profile',
+    'mobile_app',
+  ],
+  manager: [
+    'dashboard',
+    'news',
+    'employees',
+    'shifts',
+    'attendance',
+    'requests',
+    'timesheet',
+    'reports',
+    'my_profile',
+    'mobile_app',
+  ],
+  employee: [
+    'dashboard',
+    'news',
+    'shifts',
+    'attendance',
+    'requests',
+    'timesheet',
+    'payroll',
+    'my_profile',
+    'mobile_app',
+  ],
+  door_kiosk: ['attendance', 'mobile_app'],
+};
+
+export function canAccessTab(roleId: RoleId, tabId: NavTabId): boolean {
+  const allowed = ROLE_ALLOWED_TABS[roleId] || ROLE_ALLOWED_TABS.employee;
+  return allowed.includes(tabId);
+}
+
+export function canApproveRequests(roleId: RoleId): boolean {
+  return roleId === 'super_admin' || roleId === 'hr' || roleId === 'manager' || roleId === 'accountant';
+}
+
+export function canManageHR(roleId: RoleId): boolean {
+  return roleId === 'super_admin' || roleId === 'hr';
+}
+
+export function canManageSchedules(roleId: RoleId): boolean {
+  return roleId === 'super_admin' || roleId === 'hr' || roleId === 'manager';
+}
+
+export function canManagePayroll(roleId: RoleId): boolean {
+  return roleId === 'super_admin' || roleId === 'accountant';
+}
+
+export function canManageSettings(roleId: RoleId): boolean {
+  return roleId === 'super_admin';
 }
 
 /**
@@ -232,3 +566,112 @@ export async function parseExcelFile(file: File): Promise<Record<string, unknown
     return cleanRow;
   });
 }
+
+function escapeHtml(text: string): string {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export function exportPayslipToPDF(
+  row: {
+    employeeId: string;
+    period: string;
+    baseSalary: number;
+    standardDays: number;
+    actualDays: number;
+    paidLeaveDays: number;
+    proRatedSalary: number;
+    allowance: number;
+    otHours: number;
+    otAmount: number;
+    bonus: number;
+    lateCount: number;
+    lateMinutes: number;
+    latePenaltyAmount: number;
+    insuranceAmount: number;
+    taxAmount: number;
+    otherDeduction: number;
+    netSalary: number;
+  },
+  emp?: {
+    name?: string;
+    code?: string;
+    department?: string;
+    position?: string;
+    bankName?: string;
+    bankAccount?: string;
+  }
+): void {
+  if (typeof window === 'undefined') return;
+  const printWin = window.open('', '_blank', 'width=760,height=860');
+  if (!printWin) {
+    window.print();
+    return;
+  }
+  const empName = escapeHtml(emp?.name || row.employeeId);
+  const empCode = escapeHtml(emp?.code || row.employeeId);
+  const empDept = escapeHtml(emp?.department || 'Cửa hàng phuonghihi');
+  const empPos = escapeHtml(emp?.position || 'Nhân viên');
+  const periodSafe = escapeHtml(row.period);
+
+  const html = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Phiếu lương ${empCode} - Kỳ ${periodSafe}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; padding: 32px; color: #0f172a; max-width: 680px; margin: 0 auto; }
+    .header { background: #1d4ed8; color: #fff; padding: 20px 24px; border-radius: 14px; margin-bottom: 20px; }
+    .header h1 { margin: 4px 0 0; font-size: 20px; }
+    .sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.85; }
+    .meta { display: flex; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding-bottom: 14px; margin-bottom: 16px; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td { padding: 8px 4px; border-bottom: 1px dashed #e2e8f0; }
+    td:last-child { text-align: right; font-weight: 600; }
+    .pos { color: #047857; }
+    .neg { color: #e11d48; }
+    .total { margin-top: 16px; padding: 16px; background: #eff6ff; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; font-weight: 800; font-size: 16px; color: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="sub">PHIẾU LƯƠNG CÁ NHÂN — CỬA HÀNG PHUONGHIHI (123 LÊ LỢI, Q.1)</div>
+    <h1>Kỳ lương ${periodSafe}</h1>
+  </div>
+  <div class="meta">
+    <div>
+      <strong>${empName}</strong><br/>
+      Mã NV: ${empCode} · ${empDept} (${empPos})
+    </div>
+    <div style="text-align:right">
+      Công tính lương<br/>
+      <strong>${row.actualDays + row.paidLeaveDays} / ${row.standardDays} ngày</strong>
+    </div>
+  </div>
+  <table>
+    <tr><td>Lương cơ bản hợp đồng</td><td>${row.baseSalary > 0 ? formatVND(row.baseSalary) : 'Chưa khai lương'}</td></tr>
+    <tr><td>Lương theo ngày công thực tế</td><td>${formatVND(row.proRatedSalary)}</td></tr>
+    <tr><td>Phụ cấp cố định</td><td class="pos">+${formatVND(row.allowance)}</td></tr>
+    <tr><td>Lương làm thêm giờ (${row.otHours} giờ OT)</td><td class="pos">+${formatVND(row.otAmount)}</td></tr>
+    <tr><td>Thưởng &amp; Hoa hồng bán lẻ iPhone</td><td class="pos">+${formatVND(row.bonus)}</td></tr>
+    <tr><td>Khấu trừ đi muộn (${row.lateCount} lần · ${row.lateMinutes} phút)</td><td class="neg">-${formatVND(row.latePenaltyAmount)}</td></tr>
+    <tr><td>Khấu trừ khác &amp; Tạm ứng lương (EWA)</td><td class="neg">-${formatVND(row.otherDeduction)}</td></tr>
+    <tr><td>Bảo hiểm bắt buộc (BHXH/BHYT/BHTN)</td><td class="neg">-${formatVND(row.insuranceAmount)}</td></tr>
+    <tr><td>Thuế TNCN lũy tiến 7 bậc</td><td class="neg">-${formatVND(row.taxAmount)}</td></tr>
+  </table>
+  <div class="total">
+    <span>THỰC LĨNH CHUYỂN KHOẢN</span>
+    <span>${formatVND(row.netSalary)}</span>
+  </div>
+  <script>window.onload = function() { window.print(); };</script>
+</body>
+</html>`;
+  printWin.document.open();
+  printWin.document.write(html);
+  printWin.document.close();
+}
+

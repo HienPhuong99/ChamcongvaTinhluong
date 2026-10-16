@@ -80,7 +80,7 @@ function setupPhuonghihiDatabase() {
     ],
     [SHEET_NAMES.PAYROLL]: [
       'Kỳ lương', 'Mã NV', 'Lương cơ bản', 'Ngày công', 'Lương theo công',
-      'Phụ cấp', 'Lương OT', 'Thưởng', 'Phạt đi muộn', 'BHXH (10.5%)', 'Thuế TNCN', 'Thực lĩnh'
+      'Phụ cấp', 'Lương OT', 'Thưởng', 'Phạt đi muộn', 'Khấu trừ khác / EWA', 'BHXH (10.5%)', 'Thuế TNCN', 'Thực lĩnh'
     ],
     [SHEET_NAMES.SETTINGS]: ['Khóa cấu hình', 'Giá trị JSON', 'Cập nhật lúc'],
     [SHEET_NAMES.AUDIT_LOGS]: ['Thời gian', 'Người thực hiện', 'Thao tác', 'Đối tượng', 'Chi tiết'],
@@ -120,6 +120,8 @@ function doGet(e) {
   });
 }
 
+const API_SECRET = 'PHUONGHIHI_API_SECRET_2026';
+
 /**
  * Web App POST Endpoint: Nhận dữ liệu đồng bộ từ Web/App hoặc gửi Email phiếu lương
  */
@@ -130,7 +132,27 @@ function doPost(e) {
       return jsonResponse({ ok: false, error: 'Payload exceeds 500KB limit' });
     }
     const payload = JSON.parse(rawContents);
+    if (payload.token !== API_SECRET) {
+      return jsonResponse({ ok: false, error: 'Unauthorized: invalid API token' });
+    }
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (payload.action === 'SYNC_FULL_STATE') {
+      const settingsSheet = ss.getSheetByName(SHEET_NAMES.SETTINGS);
+      if (settingsSheet) {
+        settingsSheet.appendRow([
+          sanitizeSheetCell('LAST_FULL_SYNC'),
+          sanitizeSheetCell(JSON.stringify({
+            exportedAt: payload.exportedAt || new Date().toISOString(),
+            employeeCount: Array.isArray(payload.employees) ? payload.employees.length : 0,
+            attendanceCount: Array.isArray(payload.attendanceRecords) ? payload.attendanceRecords.length : 0,
+            requestCount: Array.isArray(payload.requests) ? payload.requests.length : 0,
+          })),
+          sanitizeSheetCell(new Date().toLocaleString('vi-VN')),
+        ]);
+      }
+      return jsonResponse({ ok: true, syncedAt: new Date().toISOString() });
+    }
 
     if (payload.action === 'LOG_AUDIT') {
       const logSheet = ss.getSheetByName(SHEET_NAMES.AUDIT_LOGS);
@@ -165,7 +187,7 @@ function doPost(e) {
                   <li>Ngày công tính lương: <strong>${Number(p.workDays) || 0}/${Number(p.standardDays) || 22}</strong></li>
                   <li>Lương theo ngày công: <strong>${Number(p.proRatedSalary || 0).toLocaleString('vi-VN')} đ</strong></li>
                   <li>Phụ cấp & Tăng ca & Thưởng: <strong>+${Number(p.additions || 0).toLocaleString('vi-VN')} đ</strong></li>
-                  <li>BHXH (10.5%) & Thuế TNCN & Phạt muộn: <strong>-${Number(p.deductions || 0).toLocaleString('vi-VN')} đ</strong></li>
+                  <li>BHXH (10.5%) & Thuế TNCN & Phạt muộn & Tạm ứng: <strong>-${Number(p.deductions || 0).toLocaleString('vi-VN')} đ</strong></li>
                 </ul>
                 <h3 style="color: #0F172A;">Thực lĩnh: <span style="color: #2563EB;">${Number(p.netSalary || 0).toLocaleString('vi-VN')} đ</span></h3>
               </div>

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { NavTabId } from '../types';
-import { getInitials } from '../utils/helpers';
+import { canAccessTab, formatIsoToVN, getInitials, getTodayIsoDate } from '../utils/helpers';
 
 interface NavGroup {
   title: string;
@@ -37,7 +37,8 @@ export const Sidebar: React.FC = () => {
     setActiveTab,
     requests,
     attendanceRecords,
-    employees,
+    selectedAttendanceDate,
+    scopedEmployees,
     currentAccount,
     accounts,
     switchAccount,
@@ -45,13 +46,24 @@ export const Sidebar: React.FC = () => {
     setIsMobileMenuOpen,
   } = useHRM();
 
-  const pendingRequestsCount = requests.filter((r) => r.status === 'Đang chờ').length;
-  const activeEmployeeCount = employees.filter((e) => e.status !== 'Đã nghỉ').length;
+  const scopedIds = React.useMemo(
+    () => new Set(scopedEmployees.map((e) => e.id)),
+    [scopedEmployees]
+  );
+
+  const targetDate = selectedAttendanceDate || getTodayIsoDate();
+  const pendingRequestsCount = requests.filter(
+    (r) => r.status === 'Đang chờ' && scopedIds.has(r.employeeId)
+  ).length;
+  const activeEmployeeCount = scopedEmployees.filter((e) => e.status !== 'Đã nghỉ').length;
   const presentTodayCount = attendanceRecords.filter(
-    (r) => r.status === 'Đúng giờ' || r.status === 'Đi muộn'
+    (r) =>
+      r.date === targetDate &&
+      scopedIds.has(r.employeeId) &&
+      (r.status === 'Đúng giờ' || r.status === 'Đi muộn')
   ).length;
 
-  const navGroups: NavGroup[] = [
+  const allNavGroups: NavGroup[] = [
     {
       title: 'TỔNG QUAN',
       items: [
@@ -95,9 +107,19 @@ export const Sidebar: React.FC = () => {
     },
   ];
 
+  // Filter navigation items by RBAC role
+  const navGroups = allNavGroups
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((item) => canAccessTab(currentAccount.roleId, item.id)),
+    }))
+    .filter((g) => g.items.length > 0);
+
   const handleNextAccount = () => {
-    const idx = accounts.findIndex((a) => a.id === currentAccount.id);
-    const next = accounts[(idx + 1) % accounts.length];
+    const activeAccs = accounts.filter((a) => a.active);
+    if (activeAccs.length === 0) return;
+    const idx = activeAccs.findIndex((a) => a.id === currentAccount.id);
+    const next = activeAccs[(idx + 1) % activeAccs.length];
     switchAccount(next.id);
   };
 
@@ -218,40 +240,42 @@ export const Sidebar: React.FC = () => {
           ))}
         </div>
 
-        {/* Bottom Attendance Status Widget (Matches video 00:00 bottom-left) */}
-        <div className="px-3 pb-2">
-          <div
-            onClick={() => handleSelectNav('attendance')}
-            className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 cursor-pointer hover:border-blue-200 transition"
-          >
-            <div className="text-[11px] text-slate-500 font-medium">
-              Hôm nay, 09/10/2026
-            </div>
-            <div className="text-xl font-bold text-slate-900 mt-0.5">
-              {presentTodayCount} / {activeEmployeeCount}
-            </div>
-            <div className="flex items-center justify-between mt-1">
-              <div className="flex items-center gap-1.5 text-xs text-slate-600">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Nhân viên có mặt</span>
+        {/* Bottom Attendance Status Widget */}
+        {canAccessTab(currentAccount.roleId, 'attendance') && (
+          <div className="px-3 pb-2">
+            <div
+              onClick={() => handleSelectNav('attendance')}
+              className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 cursor-pointer hover:border-blue-200 transition"
+            >
+              <div className="text-[11px] text-slate-500 font-medium">
+                Ngày {formatIsoToVN(targetDate)}
               </div>
-              <span className="text-[11px] font-medium text-blue-600">
-                {Math.round((presentTodayCount / Math.max(1, activeEmployeeCount)) * 100)}%
-              </span>
-            </div>
-            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-2">
-              <div
-                className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-                style={{
-                  width: `${Math.min(
-                    100,
-                    Math.round((presentTodayCount / Math.max(1, activeEmployeeCount)) * 100)
-                  )}%`,
-                }}
-              />
+              <div className="text-xl font-bold text-slate-900 mt-0.5">
+                {presentTodayCount} / {activeEmployeeCount}
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Nhân viên có mặt</span>
+                </div>
+                <span className="text-[11px] font-medium text-blue-600">
+                  {Math.round((presentTodayCount / Math.max(1, activeEmployeeCount)) * 100)}%
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-2">
+                <div
+                  className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round((presentTodayCount / Math.max(1, activeEmployeeCount)) * 100)
+                    )}%`,
+                  }}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* User Account Footer */}
         <div className="p-3 border-t border-slate-200 flex items-center justify-between bg-white">

@@ -6,11 +6,12 @@ import {
   Plus,
   ShieldCheck,
   X,
+  Trash2,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { ROLE_DEFINITIONS } from '../data/seedData';
 import { DepartmentName, RoleId } from '../types';
-import { getInitials, matchesSearch } from '../utils/helpers';
+import { canManageSettings, getInitials, matchesSearch } from '../utils/helpers';
 
 export const PermissionsView: React.FC = () => {
   const {
@@ -18,8 +19,9 @@ export const PermissionsView: React.FC = () => {
     currentAccount,
     switchAccount,
     addAccount,
+    deleteAccount,
     toggleAccountStatus,
-    scopedEmployees,
+    employees,
   } = useHRM();
 
   const [expandedRoleId, setExpandedRoleId] = useState<RoleId | null>(null);
@@ -30,6 +32,7 @@ export const PermissionsView: React.FC = () => {
   const [newRoleId, setNewRoleId] = useState<RoleId>('manager');
   const [newDept, setNewDept] = useState<DepartmentName>('Kỹ thuật');
 
+  const canManage = canManageSettings(currentAccount.roleId);
   const activeCount = accounts.filter((a) => a.active).length;
   const lockedCount = accounts.filter((a) => !a.active).length;
 
@@ -48,7 +51,7 @@ export const PermissionsView: React.FC = () => {
 
   const handleCreateAccount = (e: React.FormEvent) => {
     e.preventDefault();
-    const emp = scopedEmployees.find((item) => item.id === newEmpId);
+    const emp = employees.find((item) => item.id === newEmpId);
     const scope =
       newRoleId === 'super_admin' || newRoleId === 'hr' || newRoleId === 'accountant'
         ? 'Toàn hệ thống'
@@ -111,7 +114,9 @@ export const PermissionsView: React.FC = () => {
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs">
           <div className="text-xs font-medium text-slate-500">Vai trò mẫu</div>
-          <div className="text-2xl font-extrabold text-rose-700 mt-1">6</div>
+          <div className="text-2xl font-extrabold text-rose-700 mt-1">
+            {ROLE_DEFINITIONS.length}
+          </div>
           <div className="text-[11px] text-slate-400 mt-1">Bộ quyền dựng sẵn</div>
         </div>
       </div>
@@ -208,13 +213,15 @@ export const PermissionsView: React.FC = () => {
               phòng ban nào.
             </p>
           </div>
-          <button
-            onClick={() => setIsNewAccModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Cấp tài khoản</span>
-          </button>
+          {canManage && (
+            <button
+              onClick={() => setIsNewAccModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Cấp tài khoản</span>
+            </button>
+          )}
         </div>
 
         <div className="px-5 py-3 bg-slate-50/50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
@@ -289,7 +296,8 @@ export const PermissionsView: React.FC = () => {
                     <td className="py-3.5 px-4">
                       <button
                         onClick={() => toggleAccountStatus(acc.id)}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+                        disabled={!canManage}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer ${
                           acc.active
                             ? 'bg-emerald-50 text-emerald-700'
                             : 'bg-rose-50 text-rose-700'
@@ -299,19 +307,33 @@ export const PermissionsView: React.FC = () => {
                       </button>
                     </td>
                     <td className="py-3.5 px-5 text-right">
-                      {isCurrent ? (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[11px]">
-                          <ShieldCheck className="w-3.5 h-3.5" />
-                          Đang đăng nhập
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => switchAccount(acc.id)}
-                          className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-600 hover:text-white hover:border-blue-600 font-semibold text-slate-700 transition cursor-pointer"
-                        >
-                          Chuyển sang vai trò này
-                        </button>
-                      )}
+                      <div className="inline-flex items-center gap-2">
+                        {isCurrent ? (
+                          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[11px]">
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            Đang đăng nhập
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => switchAccount(acc.id)}
+                            disabled={!acc.active}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-600 hover:text-white hover:border-blue-600 disabled:opacity-40 disabled:pointer-events-none font-semibold text-slate-700 transition cursor-pointer"
+                          >
+                            {acc.active
+                              ? 'Chuyển sang vai trò này'
+                              : 'Tài khoản đang khoá'}
+                          </button>
+                        )}
+                        {canManage && !isCurrent && (
+                          <button
+                            onClick={() => deleteAccount(acc.id)}
+                            title="Thu hồi tài khoản"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -352,7 +374,7 @@ export const PermissionsView: React.FC = () => {
                   onChange={(e) => setNewEmpId(e.target.value)}
                   className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm bg-slate-50"
                 >
-                  {scopedEmployees.map((e) => (
+                  {employees.map((e) => (
                     <option key={e.id} value={e.id}>
                       {e.name} ({e.code} · {e.department})
                     </option>
@@ -394,6 +416,7 @@ export const PermissionsView: React.FC = () => {
                       'Kế toán',
                       'Marketing',
                       'Vận hành',
+                      'Phòng ban chung',
                     ].map((d) => (
                       <option key={d} value={d}>
                         {d}
@@ -424,3 +447,4 @@ export const PermissionsView: React.FC = () => {
     </div>
   );
 };
+

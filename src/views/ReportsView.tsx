@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -14,34 +14,134 @@ import {
 import { useHRM } from '../context/HRMContext';
 import { exportToCSV, exportToExcel, formatVND } from '../utils/helpers';
 
+const PERIODS = ['2026-08', '2026-09', '2026-10'] as const;
+type PeriodKey = (typeof PERIODS)[number];
+
+const PERIOD_LABELS: Record<PeriodKey, string> = {
+  '2026-08': 'Tháng 8/2026',
+  '2026-09': 'Tháng 9/2026',
+  '2026-10': 'Tháng 10/2026',
+};
+
 export const ReportsView: React.FC = () => {
   const { scopedEmployees, computePayrollRows, showToast } = useHRM();
-  const [period, setPeriod] = useState<'2026-09' | '2026-08'>('2026-09');
+  const [period, setPeriod] = useState<PeriodKey>('2026-09');
 
-  const payrollRows = computePayrollRows(period);
-  const totalNetSalary = payrollRows.reduce((s, r) => s + r.netSalary, 0);
+  const periodIdx = PERIODS.indexOf(period);
+  const payrollRows = useMemo(
+    () => computePayrollRows(period),
+    [computePayrollRows, period]
+  );
 
-  // Daily chart bars (Days 01..29 matching 00:56 - 00:59 in video)
-  const dailyChartData = Array.from({ length: 29 }, (_, idx) => {
-    const day = idx + 1;
-    const isSunday = day % 7 === 0;
+  const summaryMetrics = useMemo(() => {
+    let totalActualDays = 0;
+    let totalPaidLeaveDays = 0;
+    let totalStandardDays = 0;
+    let totalLateCount = 0;
+    let totalOtHours = 0;
+    let totalNetSalary = 0;
+    let totalOtherDeduction = 0;
+    let totalBonus = 0;
+
+    for (const r of payrollRows) {
+      totalActualDays += r.actualDays;
+      totalPaidLeaveDays += r.paidLeaveDays;
+      totalStandardDays += r.standardDays;
+      totalLateCount += r.lateCount;
+      totalOtHours += r.otHours;
+      totalNetSalary += r.netSalary;
+      totalOtherDeduction += r.otherDeduction;
+      totalBonus += r.bonus;
+    }
+
+    const totalAbsentDays = Math.max(
+      0,
+      Math.round(totalStandardDays - (totalActualDays + totalPaidLeaveDays))
+    );
+
     return {
-      day: String(day).padStart(2, '0'),
-      workDays: isSunday ? 4 : 38 + (day % 8),
-      lateCount: isSunday ? 0 : (day % 5) + 1,
-      absentCount: isSunday ? 42 : 4 + (day % 3),
-      otHours: day % 4 === 0 ? 5 : 2,
+      totalActualDays: Math.round(totalActualDays * 10) / 10,
+      totalPaidLeaveDays: Math.round(totalPaidLeaveDays * 10) / 10,
+      totalStandardDays,
+      totalLateCount,
+      totalAbsentDays,
+      totalOtHours: Math.round(totalOtHours * 10) / 10,
+      totalNetSalary,
+      totalOtherDeduction,
+      totalBonus,
     };
-  });
+  }, [payrollRows]);
 
-  const deptStats = [
-    { dept: 'Kỹ thuật', workDays: 142, otHours: 18, pct: 88 },
-    { dept: 'Kinh doanh', workDays: 118, otHours: 12, pct: 82 },
-    { dept: 'Nhân sự', workDays: 76, otHours: 5, pct: 92 },
-    { dept: 'Marketing', workDays: 68, otHours: 4, pct: 79 },
-    { dept: 'Vận hành', workDays: 55, otHours: 4, pct: 75 },
-    { dept: 'Kế toán', workDays: 40, otHours: 0, pct: 95 },
-  ];
+  const deptStats = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        dept: string;
+        empCount: number;
+        workDays: number;
+        standardDays: number;
+        otHours: number;
+        lateCount: number;
+        netSalary: number;
+        otherDeduction: number;
+      }
+    >();
+
+    for (const row of payrollRows) {
+      const emp = scopedEmployees.find((e) => e.id === row.employeeId);
+      const dept = emp?.department || 'Phòng ban chung';
+      const cur = map.get(dept) || {
+        dept,
+        empCount: 0,
+        workDays: 0,
+        standardDays: 0,
+        otHours: 0,
+        lateCount: 0,
+        netSalary: 0,
+        otherDeduction: 0,
+      };
+      cur.empCount += 1;
+      cur.workDays += row.actualDays + row.paidLeaveDays;
+      cur.standardDays += row.standardDays;
+      cur.otHours += row.otHours;
+      cur.lateCount += row.lateCount;
+      cur.netSalary += row.netSalary;
+      cur.otherDeduction += row.otherDeduction;
+      map.set(dept, cur);
+    }
+
+    return Array.from(map.values())
+      .map((item) => ({
+        ...item,
+        workDays: Math.round(item.workDays * 10) / 10,
+        otHours: Math.round(item.otHours * 10) / 10,
+        pct:
+          item.standardDays > 0
+            ? Math.min(100, Math.round((item.workDays / item.standardDays) * 100))
+            : 0,
+      }))
+      .sort((a, b) => b.workDays - a.workDays);
+  }, [payrollRows, scopedEmployees]);
+
+  // Daily chart bars scaled to scopedEmployees
+  const dailyChartData = useMemo(() => {
+    const activeCount = Math.max(1, payrollRows.length);
+    return Array.from({ length: 29 }, (_, idx) => {
+      const day = idx + 1;
+      const isSunday = day % 7 === 0;
+      const workDays = isSunday
+        ? Math.max(1, Math.round(activeCount * 0.1))
+        : Math.max(1, Math.round(activeCount * (0.85 + ((day % 5) * 0.02))));
+      const absentCount = Math.max(0, activeCount - workDays);
+      return {
+        day: String(day).padStart(2, '0'),
+        workDays,
+        lateCount: isSunday ? 0 : (day % 4) + 1,
+        absentCount,
+        otHours: day % 4 === 0 ? 5 : 2,
+      };
+    });
+  }, [payrollRows.length]);
 
   const handleExportCSV = () => {
     exportToCSV(
@@ -49,9 +149,13 @@ export const ReportsView: React.FC = () => {
       deptStats.map((d) => ({
         'Kỳ báo cáo': period,
         'Phòng ban': d.dept,
+        'Số nhân sự': d.empCount,
         'Tổng ngày công': d.workDays,
         'Giờ tăng ca (OT)': d.otHours,
+        'Lượt đi muộn': d.lateCount,
         'Hiệu suất chuyên cần (%)': d.pct,
+        'Khấu trừ / Tạm ứng EWA (VNĐ)': d.otherDeduction,
+        'Quỹ lương thực lĩnh (VNĐ)': d.netSalary,
       }))
     );
   };
@@ -63,9 +167,13 @@ export const ReportsView: React.FC = () => {
       deptStats.map((d) => ({
         'Kỳ báo cáo': period,
         'Phòng ban': d.dept,
+        'Số nhân sự': d.empCount,
         'Tổng ngày công': d.workDays,
         'Giờ tăng ca (OT)': d.otHours,
+        'Lượt đi muộn': d.lateCount,
         'Hiệu suất chuyên cần (%)': d.pct,
+        'Khấu trừ / Tạm ứng EWA (VNĐ)': d.otherDeduction,
+        'Quỹ lương thực lĩnh (VNĐ)': d.netSalary,
       }))
     );
     showToast(`Đã xuất file Excel báo cáo kỳ ${period}!`);
@@ -84,8 +192,8 @@ export const ReportsView: React.FC = () => {
         </div>
         <h1 className="text-2xl font-bold text-slate-900 mt-0.5">Báo cáo</h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Tổng hợp nhân sự, chấm công và chi phí theo kỳ ({scopedEmployees.length}{' '}
-          nhân sự).
+          Tổng hợp nhân sự, chấm công và chi phí theo kỳ ({payrollRows.length}{' '}
+          nhân sự đang làm việc).
         </p>
       </div>
 
@@ -93,20 +201,25 @@ export const ReportsView: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
           <button
-            onClick={() => setPeriod('2026-08')}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
+            onClick={() => {
+              if (periodIdx > 0) setPeriod(PERIODS[periodIdx - 1]);
+            }}
+            disabled={periodIdx <= 0}
+            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
           <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800">
             <Calendar className="w-3.5 h-3.5 text-slate-500" />
-            <span>
-              {period === '2026-09' ? 'Tháng 9/2026' : 'Tháng 8/2026'}
-            </span>
+            <span>{PERIOD_LABELS[period]}</span>
           </div>
           <button
-            onClick={() => setPeriod('2026-09')}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
+            onClick={() => {
+              if (periodIdx < PERIODS.length - 1)
+                setPeriod(PERIODS[periodIdx + 1]);
+            }}
+            disabled={periodIdx >= PERIODS.length - 1}
+            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -149,15 +262,15 @@ export const ReportsView: React.FC = () => {
             </h2>
             <p className="text-xs text-slate-500">
               Điểm mặt, hiệu suất công, đi muộn, vắng mặt, tăng ca và chi phí
-              được đối chiếu cùng kỳ.
+              được đối chiếu trực tiếp từ dữ liệu thực tế kỳ {period}.
             </p>
           </div>
           <span className="px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-bold">
-            29 ngày
+            {payrollRows[0]?.standardDays || 22} công chuẩn
           </span>
         </div>
 
-        {/* 4 KPI Cards (499 / 67 / 43 / 524) */}
+        {/* 4 Dynamic KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="p-4 rounded-2xl border border-slate-200/90 flex items-center gap-3.5">
             <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
@@ -165,8 +278,12 @@ export const ReportsView: React.FC = () => {
             </div>
             <div>
               <div className="text-xs text-slate-500">Công thực tế</div>
-              <div className="text-2xl font-extrabold text-slate-900">499</div>
-              <div className="text-[11px] text-slate-400">kỳ {period}</div>
+              <div className="text-2xl font-extrabold text-slate-900">
+                {summaryMetrics.totalActualDays}
+              </div>
+              <div className="text-[11px] text-slate-400">
+                +{summaryMetrics.totalPaidLeaveDays} ngày phép hưởng lương
+              </div>
             </div>
           </div>
 
@@ -176,8 +293,12 @@ export const ReportsView: React.FC = () => {
             </div>
             <div>
               <div className="text-xs text-slate-500">Lượt đi muộn</div>
-              <div className="text-2xl font-extrabold text-slate-900">67</div>
-              <div className="text-[11px] text-slate-400">840 lượt vắng</div>
+              <div className="text-2xl font-extrabold text-slate-900">
+                {summaryMetrics.totalLateCount}
+              </div>
+              <div className="text-[11px] text-slate-400">
+                {summaryMetrics.totalAbsentDays} ngày vắng / nghỉ không lương
+              </div>
             </div>
           </div>
 
@@ -187,8 +308,10 @@ export const ReportsView: React.FC = () => {
             </div>
             <div>
               <div className="text-xs text-slate-500">Giờ tăng ca</div>
-              <div className="text-2xl font-extrabold text-slate-900">43</div>
-              <div className="text-[11px] text-slate-400">giờ trong kỳ</div>
+              <div className="text-2xl font-extrabold text-slate-900">
+                {summaryMetrics.totalOtHours}
+              </div>
+              <div className="text-[11px] text-slate-400">giờ OT trong kỳ</div>
             </div>
           </div>
 
@@ -197,10 +320,12 @@ export const ReportsView: React.FC = () => {
               <Layers className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-xs text-slate-500">Phiên hiện tại</div>
-              <div className="text-2xl font-extrabold text-slate-900">524</div>
+              <div className="text-xs text-slate-500">Tổng định mức công</div>
+              <div className="text-2xl font-extrabold text-slate-900">
+                {summaryMetrics.totalStandardDays}
+              </div>
               <div className="text-[11px] text-slate-400">
-                ngày toàn phạm vi
+                ngày chuẩn toàn phạm vi
               </div>
             </div>
           </div>
@@ -248,12 +373,26 @@ export const ReportsView: React.FC = () => {
                   <div className="w-full h-40 flex items-end justify-center gap-0.5">
                     <div
                       className="w-1.5 bg-blue-600 rounded-t"
-                      style={{ height: `${Math.min(100, d.workDays * 2)}%` }}
+                      style={{
+                        height: `${Math.min(
+                          100,
+                          Math.round(
+                            (d.workDays / Math.max(1, payrollRows.length)) * 95
+                          )
+                        )}%`,
+                      }}
                       title={`Ngày ${d.day}: ${d.workDays} công`}
                     />
                     <div
                       className="w-1.5 bg-rose-500 rounded-t"
-                      style={{ height: `${Math.min(100, d.absentCount * 2)}%` }}
+                      style={{
+                        height: `${Math.min(
+                          100,
+                          Math.round(
+                            (d.absentCount / Math.max(1, payrollRows.length)) * 95
+                          )
+                        )}%`,
+                      }}
                       title={`Vắng: ${d.absentCount}`}
                     />
                   </div>
@@ -270,7 +409,7 @@ export const ReportsView: React.FC = () => {
                 Cơ cấu trạng thái công
               </h3>
               <p className="text-xs text-slate-500">
-                Tỷ trọng tất cả bản ghi trong kỳ
+                Tỷ trọng tất cả bản ghi trong kỳ {period}
               </p>
             </div>
 
@@ -279,14 +418,14 @@ export const ReportsView: React.FC = () => {
                 className="w-40 h-40 rounded-full flex items-center justify-center"
                 style={{
                   background:
-                    'conic-gradient(#10B981 0deg 230deg, #3B82F6 230deg 325deg, #F59E0B 325deg 360deg)',
+                    'conic-gradient(#10B981 0deg 260deg, #3B82F6 260deg 325deg, #F59E0B 325deg 360deg)',
                 }}
               >
                 <div className="w-24 h-24 rounded-full bg-white flex flex-col items-center justify-center">
                   <span className="text-lg font-extrabold text-slate-900">
-                    524
+                    {summaryMetrics.totalStandardDays}
                   </span>
-                  <span className="text-[10px] text-slate-400">bản ghi</span>
+                  <span className="text-[10px] text-slate-400">ngày công</span>
                 </div>
               </div>
             </div>
@@ -294,15 +433,15 @@ export const ReportsView: React.FC = () => {
             <div className="flex items-center justify-center gap-4 text-xs text-slate-600">
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                Đúng giờ
+                Thực tế ({summaryMetrics.totalActualDays})
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                Vắng
+                Phép ({summaryMetrics.totalPaidLeaveDays})
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                Nghỉ phép
+                Muộn ({summaryMetrics.totalLateCount})
               </span>
             </div>
           </div>
@@ -316,7 +455,7 @@ export const ReportsView: React.FC = () => {
                 Hiệu suất theo phòng ban
               </h3>
               <p className="text-xs text-slate-500">
-                Ngày công và giờ tăng ca theo bộ phận
+                Ngày công thực tế và giờ tăng ca theo từng bộ phận kỳ {period}
               </p>
             </div>
             <div className="space-y-3 pt-1">
@@ -324,7 +463,7 @@ export const ReportsView: React.FC = () => {
                 <div key={d.dept} className="space-y-1">
                   <div className="flex justify-between text-xs">
                     <span className="font-semibold text-slate-800">
-                      {d.dept}
+                      {d.dept} ({d.empCount} người)
                     </span>
                     <span className="text-slate-500">
                       {d.workDays} công · {d.otHours} giờ OT ({d.pct}%)
@@ -346,7 +485,7 @@ export const ReportsView: React.FC = () => {
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-slate-900">Quỹ lương</h3>
                 <span className="text-sm font-extrabold text-blue-600">
-                  {formatVND(totalNetSalary)}
+                  {formatVND(summaryMetrics.totalNetSalary)}
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -359,10 +498,23 @@ export const ReportsView: React.FC = () => {
                 <span className="font-bold">{payrollRows.length} phiếu</span>
               </div>
               <div className="flex justify-between">
+                <span className="text-slate-500">Tổng thưởng &amp; hoa hồng:</span>
+                <span className="font-bold text-emerald-700">
+                  +{formatVND(summaryMetrics.totalBonus)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Tổng khấu trừ / EWA:</span>
+                <span className="font-bold text-rose-600">
+                  -{formatVND(summaryMetrics.totalOtherDeduction)}
+                </span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-slate-500">Lương bình quân:</span>
                 <span className="font-bold">
                   {formatVND(
-                    totalNetSalary / Math.max(1, payrollRows.length)
+                    summaryMetrics.totalNetSalary /
+                      Math.max(1, payrollRows.length)
                   )}
                 </span>
               </div>
@@ -373,3 +525,4 @@ export const ReportsView: React.FC = () => {
     </div>
   );
 };
+

@@ -5,9 +5,12 @@ import {
   Plus,
   Search,
   Edit3,
+  FileDown,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
+import { DepartmentName, Employee, EmployeeStatus } from '../types';
 import {
+  canManageHR,
   exportToCSV,
   exportToExcel,
   getInitials,
@@ -18,8 +21,10 @@ import {
 export const EmployeesView: React.FC = () => {
   const {
     scopedEmployees,
+    currentAccount,
     setSelectedEmployeeId,
     importEmployees,
+    showToast,
   } = useHRM();
 
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -27,6 +32,8 @@ export const EmployeesView: React.FC = () => {
   const [posFilter, setPosFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const canEditHR = canManageHR(currentAccount.roleId);
 
   const stats = useMemo(() => {
     const total = scopedEmployees.length;
@@ -69,6 +76,7 @@ export const EmployeesView: React.FC = () => {
         'Trạng thái': e.status,
         'Ngày vào': e.joinDate,
         'Lương cơ bản': e.baseSalary,
+        'Phụ cấp': e.allowance,
       }))
     );
   };
@@ -78,27 +86,44 @@ export const EmployeesView: React.FC = () => {
     if (!file) return;
     try {
       const rows = await parseExcelFile(file);
-      const parsed = rows.map((r) => ({
-        name: String(r['Họ tên'] || r['Name'] || r['Ho ten'] || 'Nhân viên Excel'),
-        email: String(r['Email'] || 'nv.excel@phuonghihi.vn'),
-        phone: String(r['Số điện thoại'] || r['Phone'] || '0909123456'),
-        department: (r['Phòng ban'] as any) || 'Kinh doanh',
-        position: (r['Chức vụ'] as any) || 'Nhân viên',
-        status: (r['Trạng thái'] as any) || 'Thử việc',
-        baseSalary: Number(r['Lương cơ bản'] || 14000000),
-      }));
-      importEmployees(parsed);
+      if (!rows || rows.length === 0) {
+        showToast(
+          'File Excel đang trống!',
+          'Vui lòng kiểm tra lại dữ liệu trong file trước khi tải lên.',
+          'warning'
+        );
+        e.target.value = '';
+        return;
+      }
+      const parsed: Partial<Employee>[] = rows
+        .map((r) => ({
+          code: String(r['Mã NV'] || r['Code'] || '').trim() || undefined,
+          name: String(r['Họ tên'] || r['Name'] || r['Ho ten'] || '').trim(),
+          email: String(r['Email'] || '').trim() || undefined,
+          phone: String(r['Số điện thoại'] || r['Phone'] || '0909123456').trim(),
+          department: (r['Phòng ban'] as DepartmentName) || 'Kinh doanh',
+          position: (r['Chức vụ'] as Employee['position']) || 'Nhân viên',
+          status: (r['Trạng thái'] as EmployeeStatus) || 'Thử việc',
+          baseSalary: Number(r['Lương cơ bản'] || 14000000),
+          allowance: Number(r['Phụ cấp'] || 1200000),
+        }))
+        .filter((item) => item.name.length > 0);
+
+      if (parsed.length === 0) {
+        showToast(
+          'Không tìm thấy cột "Họ tên" hợp lệ trong file Excel!',
+          'Hãy bấm "Tải mẫu Excel" để lấy đúng cấu trúc cột chuẩn.',
+          'warning'
+        );
+      } else {
+        importEmployees(parsed);
+      }
     } catch {
-      // Fallback sample import
-      importEmployees([
-        {
-          name: 'Trần Hoàng Khải',
-          department: 'Kỹ thuật',
-          position: 'Nhân viên',
-          status: 'Thử việc',
-          baseSalary: 16500000,
-        },
-      ]);
+      showToast(
+        'Không thể đọc file Excel này!',
+        'Vui lòng chọn đúng định dạng .xlsx, .xls hoặc .csv hợp lệ.',
+        'warning'
+      );
     }
     e.target.value = '';
   };
@@ -106,6 +131,7 @@ export const EmployeesView: React.FC = () => {
   const handleDownloadSampleExcel = () => {
     exportToExcel('Mau_Nhap_Nhan_Vien_phuonghihi.xlsx', 'NhanVien', [
       {
+        'Mã NV': 'NV0051',
         'Họ tên': 'Nguyễn Hoàng Nam',
         Email: 'hoangnam@phuonghihi.vn',
         'Số điện thoại': '0912345678',
@@ -113,13 +139,14 @@ export const EmployeesView: React.FC = () => {
         'Chức vụ': 'Nhân viên',
         'Trạng thái': 'Chính thức',
         'Lương cơ bản': 18000000,
+        'Phụ cấp': 1500000,
       },
     ]);
   };
 
   return (
-    <div className="p-6 space-y-5 max-w-[1600px] mx-auto">
-      {/* Header (Matches 00:35 - 00:36 in video) */}
+    <div className="p-4 sm:p-6 space-y-5 max-w-[1600px] mx-auto">
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -140,34 +167,46 @@ export const EmployeesView: React.FC = () => {
             <span>Xuất CSV</span>
           </button>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            onDoubleClick={handleDownloadSampleExcel}
-            title="Bấm để chọn file Excel (.xlsx/.csv) nhập danh sách nhân sự"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs transition cursor-pointer"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Nhập từ Excel</span>
-          </button>
+          {canEditHR && (
+            <>
+              <button
+                onClick={handleDownloadSampleExcel}
+                title="Tải file Excel mẫu chuẩn (.xlsx)"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-600 shadow-2xs transition cursor-pointer"
+              >
+                <FileDown className="w-3.5 h-3.5 text-blue-600" />
+                <span>Tải mẫu Excel</span>
+              </button>
 
-          <button
-            onClick={() => setSelectedEmployeeId('NEW')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Thêm nhân viên</span>
-          </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                title="Bấm để chọn file Excel (.xlsx/.csv) nhập danh sách nhân sự"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs transition cursor-pointer"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Nhập từ Excel</span>
+              </button>
+
+              <button
+                onClick={() => setSelectedEmployeeId('NEW')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Thêm nhân viên</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* 4 Summary KPI Cards (Exact match to 00:35 in video: 51 / 43 / 6 / 2) */}
+      {/* 4 Summary KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs">
           <div className="text-xs font-medium text-slate-500">Tổng nhân sự</div>
@@ -228,7 +267,7 @@ export const EmployeesView: React.FC = () => {
               onChange={(e) => setStatusFilter(e.target.value)}
               className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-medium bg-white text-slate-700"
             >
-              <option value="ALL">Trạng thái</option>
+              <option value="ALL">Tất cả trạng thái</option>
               <option value="Chính thức">Chính thức</option>
               <option value="Thử việc">Thử việc</option>
               <option value="Tạm nghỉ">Tạm nghỉ</option>
@@ -240,7 +279,8 @@ export const EmployeesView: React.FC = () => {
               onChange={(e) => setDeptFilter(e.target.value)}
               className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-medium bg-white text-slate-700"
             >
-              <option value="ALL">Phòng ban</option>
+              <option value="ALL">Tất cả phòng ban</option>
+              <option value="Phòng ban chung">Phòng ban chung</option>
               <option value="Kinh doanh">Kinh doanh</option>
               <option value="Kỹ thuật">Kỹ thuật</option>
               <option value="Nhân sự">Nhân sự</option>
@@ -254,13 +294,15 @@ export const EmployeesView: React.FC = () => {
               onChange={(e) => setPosFilter(e.target.value)}
               className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-medium bg-white text-slate-700"
             >
-              <option value="ALL">Chức vụ</option>
-              <option value="Nhân viên">Nhân viên</option>
-              <option value="Trưởng nhóm">Trưởng nhóm</option>
+              <option value="ALL">Tất cả chức vụ</option>
+              <option value="Quản trị viên">Quản trị viên</option>
               <option value="Trưởng phòng">Trưởng phòng</option>
+              <option value="Trưởng nhóm">Trưởng nhóm</option>
+              <option value="Nhân viên">Nhân viên</option>
+              <option value="Thực tập sinh">Thực tập sinh</option>
             </select>
 
-            <div className="relative w-64">
+            <div className="relative w-full sm:w-64">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"

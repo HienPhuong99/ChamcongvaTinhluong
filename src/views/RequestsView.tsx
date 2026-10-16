@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Check,
   X,
@@ -8,14 +8,74 @@ import {
   ChevronRight,
   Sparkles,
 } from 'lucide-react';
-import { useHRM } from '../context/HRMContext';
-import { RequestType } from '../types';
-import { getInitials } from '../utils/helpers';
+import { isDateInLeaveRange, useHRM } from '../context/HRMContext';
+import { RequestType, ShiftCode } from '../types';
+import {
+  calculateInclusiveDays,
+  canApproveRequests,
+  canManageHR,
+  getInitials,
+} from '../utils/helpers';
 
 type RequestSubTab = 'mine' | 'pending' | 'calendar' | 'balance';
 
+const CALENDAR_WINDOWS = [
+  // Window 0: 01/10 - 14/10
+  [
+    { iso: '2026-10-01', label: 'T5 1' },
+    { iso: '2026-10-02', label: 'T6 2' },
+    { iso: '2026-10-03', label: 'T7 3' },
+    { iso: '2026-10-04', label: 'CN 4', isSun: true },
+    { iso: '2026-10-05', label: 'T2 5' },
+    { iso: '2026-10-06', label: 'T3 6' },
+    { iso: '2026-10-07', label: 'T4 7' },
+    { iso: '2026-10-08', label: 'T5 8' },
+    { iso: '2026-10-09', label: 'T6 9' },
+    { iso: '2026-10-10', label: 'T7 10' },
+    { iso: '2026-10-11', label: 'CN 11', isSun: true },
+    { iso: '2026-10-12', label: 'T2 12' },
+    { iso: '2026-10-13', label: 'T3 13' },
+    { iso: '2026-10-14', label: 'T4 14' },
+  ],
+  // Window 1: 08/10 - 21/10 (Default)
+  [
+    { iso: '2026-10-08', label: 'T5 8' },
+    { iso: '2026-10-09', label: 'T6 9' },
+    { iso: '2026-10-10', label: 'T7 10' },
+    { iso: '2026-10-11', label: 'CN 11', isSun: true },
+    { iso: '2026-10-12', label: 'T2 12' },
+    { iso: '2026-10-13', label: 'T3 13' },
+    { iso: '2026-10-14', label: 'T4 14' },
+    { iso: '2026-10-15', label: 'T5 15' },
+    { iso: '2026-10-16', label: 'T6 16' },
+    { iso: '2026-10-17', label: 'T7 17' },
+    { iso: '2026-10-18', label: 'CN 18', isSun: true },
+    { iso: '2026-10-19', label: 'T2 19' },
+    { iso: '2026-10-20', label: 'T3 20' },
+    { iso: '2026-10-21', label: 'T4 21' },
+  ],
+  // Window 2: 18/10 - 31/10
+  [
+    { iso: '2026-10-18', label: 'CN 18', isSun: true },
+    { iso: '2026-10-19', label: 'T2 19' },
+    { iso: '2026-10-20', label: 'T3 20' },
+    { iso: '2026-10-21', label: 'T4 21' },
+    { iso: '2026-10-22', label: 'T5 22' },
+    { iso: '2026-10-23', label: 'T6 23' },
+    { iso: '2026-10-24', label: 'T7 24' },
+    { iso: '2026-10-25', label: 'CN 25', isSun: true },
+    { iso: '2026-10-26', label: 'T2 26' },
+    { iso: '2026-10-27', label: 'T3 27' },
+    { iso: '2026-10-28', label: 'T4 28' },
+    { iso: '2026-10-29', label: 'T5 29' },
+    { iso: '2026-10-30', label: 'T6 30' },
+    { iso: '2026-10-31', label: 'T7 31' },
+  ],
+];
+
 export const RequestsView: React.FC = () => {
   const {
+    employees,
     scopedEmployees,
     requests,
     leaveBalances,
@@ -25,15 +85,37 @@ export const RequestsView: React.FC = () => {
     allocateAnnualLeave,
   } = useHRM();
 
-  const [subTab, setSubTab] = useState<RequestSubTab>('pending');
+  const canApprove = canApproveRequests(currentAccount.roleId);
+  const canAllocateLeave = canManageHR(currentAccount.roleId);
+
+  const [subTab, setSubTab] = useState<RequestSubTab>(
+    canApprove ? 'pending' : 'mine'
+  );
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'Đang chờ' | 'Đã duyệt' | 'Từ chối'>('ALL');
+  const [calendarWinIdx, setCalendarWinIdx] = useState(1);
+  const [showAllBalances, setShowAllBalances] = useState(false);
+
+  // New request modal state
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [newType, setNewType] = useState<RequestType>('Nghỉ phép năm');
-  const [newEmpId, setNewEmpId] = useState<string>('NV0009');
-  const [newStart, setNewStart] = useState('12/10/2026');
-  const [newEnd, setNewEnd] = useState('13/10/2026');
+  const [newEmpId, setNewEmpId] = useState<string>(currentAccount.employeeId);
+  const [newStart, setNewStart] = useState('16/10/2026');
+  const [newEnd, setNewEnd] = useState('17/10/2026');
   const [newReason, setNewReason] = useState('');
-  const [newTargetShift, setNewTargetShift] = useState<'sang' | 'chieu' | 'hanh_chinh' | 'ca_gay'>('sang');
+  const [newTargetShift, setNewTargetShift] = useState<ShiftCode>('sang');
+  const [newSwapWithEmpId, setNewSwapWithEmpId] = useState<string>('');
   const [newAdvanceAmount, setNewAdvanceAmount] = useState<number>(3000000);
+  const [newOtHours, setNewOtHours] = useState<number>(2);
+  const [newCheckInTime, setNewCheckInTime] = useState<string>('08:00');
+  const [newCheckOutTime, setNewCheckOutTime] = useState<string>('17:30');
+
+  useEffect(() => {
+    if (scopedEmployees.some((e) => e.id === currentAccount.employeeId)) {
+      setNewEmpId(currentAccount.employeeId);
+    } else if (scopedEmployees.length > 0) {
+      setNewEmpId(scopedEmployees[0].id);
+    }
+  }, [currentAccount.employeeId, scopedEmployees]);
 
   const scopedRequests = useMemo(() => {
     const empSet = new Set(scopedEmployees.map((e) => e.id));
@@ -43,41 +125,104 @@ export const RequestsView: React.FC = () => {
   const pendingCount = scopedRequests.filter((r) => r.status === 'Đang chờ').length;
 
   const myRequests = useMemo(
+    () => requests.filter((r) => r.employeeId === currentAccount.employeeId),
+    [requests, currentAccount.employeeId]
+  );
+
+  const displayedRequests = useMemo(() => {
+    const base = subTab === 'mine' ? myRequests : scopedRequests;
+    if (statusFilter === 'ALL') return base;
+    return base.filter((r) => r.status === statusFilter);
+  }, [subTab, myRequests, scopedRequests, statusFilter]);
+
+  const unallocatedCount = useMemo(() => {
+    const scopedSet = new Set(scopedEmployees.map((e) => e.id));
+    return leaveBalances.filter(
+      (lb) => scopedSet.has(lb.employeeId) && !lb.allocated
+    ).length;
+  }, [leaveBalances, scopedEmployees]);
+
+  // Dynamic Company Leave Calendar items computed from requests
+  const calendarDaysWithItems = useMemo(() => {
+    const windowDays = CALENDAR_WINDOWS[calendarWinIdx] || CALENDAR_WINDOWS[1];
+    const leaveAndTripReqs = scopedRequests.filter(
+      (r) =>
+        r.status !== 'Từ chối' &&
+        (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm' || r.type === 'Công tác')
+    );
+
+    return windowDays.map((day) => {
+      const matching = leaveAndTripReqs
+        .filter((r) => isDateInLeaveRange(day.iso, r.startDate, r.endDate))
+        .map((r) => {
+          const emp = employees.find((e) => e.id === r.employeeId);
+          return {
+            id: r.id,
+            name: emp?.name || r.employeeId,
+            type: r.type,
+            status: r.status,
+            color: r.type === 'Công tác' ? ('amber' as const) : ('emerald' as const),
+          };
+        });
+      return {
+        ...day,
+        items: matching,
+      };
+    });
+  }, [calendarWinIdx, scopedRequests, employees]);
+
+  const totalCalendarRequestsCount = useMemo(
     () =>
       scopedRequests.filter(
         (r) =>
-          r.employeeId === currentAccount.employeeId ||
-          r.employeeId === 'NV0009' ||
-          r.employeeId === 'NV0001'
-      ),
-    [scopedRequests, currentAccount.employeeId]
+          r.status !== 'Từ chối' &&
+          (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm' || r.type === 'Công tác')
+      ).length,
+    [scopedRequests]
   );
 
-  const unallocatedCount = useMemo(
-    () => leaveBalances.filter((lb) => !lb.allocated).length,
-    [leaveBalances]
+  const computedDaysPreview = useMemo(
+    () => calculateInclusiveDays(newStart, newEnd),
+    [newStart, newEnd]
   );
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newReason.trim()) return;
-    createRequest({
+    const ok = createRequest({
       employeeId: newEmpId,
       type: newType,
       startDate: newStart,
-      endDate: newEnd,
+      endDate:
+        newType === 'Đổi ca trực' ||
+        newType === 'Ứng lương nhanh' ||
+        newType === 'Đăng ký tăng ca' ||
+        newType === 'Bổ sung chấm công'
+          ? newStart
+          : newEnd,
       reason: newReason,
-      days: 1,
+      days: computedDaysPreview,
       targetShiftCode: newType === 'Đổi ca trực' ? newTargetShift : undefined,
+      swapWithEmployeeId:
+        newType === 'Đổi ca trực' && newSwapWithEmpId ? newSwapWithEmpId : undefined,
       advanceAmount: newType === 'Ứng lương nhanh' ? newAdvanceAmount : undefined,
+      otHours: newType === 'Đăng ký tăng ca' ? newOtHours : undefined,
+      checkInTime: newType === 'Bổ sung chấm công' ? newCheckInTime : undefined,
+      checkOutTime: newType === 'Bổ sung chấm công' ? newCheckOutTime : undefined,
     });
-    setNewReason('');
-    setIsNewModalOpen(false);
+    if (ok) {
+      setNewReason('');
+      setIsNewModalOpen(false);
+    }
   };
 
+  const displayedBalanceEmps = showAllBalances
+    ? scopedEmployees
+    : scopedEmployees.slice(0, 20);
+
   return (
-    <div className="p-6 space-y-5 max-w-[1600px] mx-auto">
-      {/* Header (Matches 00:27 in video) */}
+    <div className="p-4 sm:p-6 space-y-5 max-w-[1600px] mx-auto">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -98,13 +243,13 @@ export const RequestsView: React.FC = () => {
         </button>
       </div>
 
-      {/* 4 Sub-tabs (Exact match to 00:27 - 00:34 in video) */}
-      <div className="flex items-center gap-6 border-b border-slate-200">
+      {/* 4 Sub-tabs */}
+      <div className="flex items-center gap-6 border-b border-slate-200 overflow-x-auto">
         {[
-          { id: 'mine' as const, label: 'Đơn của tôi' },
+          { id: 'mine' as const, label: `Đơn của tôi (${myRequests.length})` },
           {
             id: 'pending' as const,
-            label: 'Chờ tôi duyệt',
+            label: canApprove ? 'Danh sách duyệt đơn' : 'Đơn trong phạm vi',
             badge: pendingCount,
           },
           { id: 'calendar' as const, label: 'Lịch nghỉ công ty' },
@@ -115,7 +260,7 @@ export const RequestsView: React.FC = () => {
             <button
               key={t.id}
               onClick={() => setSubTab(t.id)}
-              className={`pb-3 text-xs font-semibold border-b-2 flex items-center gap-2 transition ${
+              className={`pb-3 text-xs font-semibold border-b-2 flex items-center gap-2 whitespace-nowrap transition ${
                 isActive
                   ? 'border-blue-600 text-blue-600'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -138,9 +283,30 @@ export const RequestsView: React.FC = () => {
         })}
       </div>
 
-      {/* Tab 1 & 2: Pending / My Requests Table (Matches 00:27 - 00:30 in video) */}
+      {/* Tab 1 & 2: Pending / My Requests Table */}
       {(subTab === 'pending' || subTab === 'mine') && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(['ALL', 'Đang chờ', 'Đã duyệt', 'Từ chối'] as const).map((st) => (
+                <button
+                  key={st}
+                  onClick={() => setStatusFilter(st)}
+                  className={`px-3 py-1 rounded-xl text-xs font-semibold transition ${
+                    statusFilter === st
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {st === 'ALL' ? 'Tất cả trạng thái' : st}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-slate-400">
+              Hiển thị {displayedRequests.length} đơn từ
+            </span>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -150,15 +316,33 @@ export const RequestsView: React.FC = () => {
                   <th className="py-3.5 px-4">Thời gian</th>
                   <th className="py-3.5 px-4">Lý do</th>
                   <th className="py-3.5 px-4">Trạng thái</th>
-                  <th className="py-3.5 px-5 text-right">Duyệt nhanh</th>
+                  {canApprove && (
+                    <th className="py-3.5 px-5 text-right">Duyệt nhanh</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
-                {(subTab === 'pending' ? scopedRequests : myRequests).map(
-                  (req) => {
-                    const emp = scopedEmployees.find(
-                      (e) => e.id === req.employeeId
-                    );
+                {displayedRequests.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={canApprove ? 6 : 5}
+                      className="py-10 text-center text-slate-400"
+                    >
+                      Không có đơn từ nào trong mục này.
+                    </td>
+                  </tr>
+                ) : (
+                  displayedRequests.map((req) => {
+                    const emp = employees.find((e) => e.id === req.employeeId);
+                    const swapEmp = req.swapWithEmployeeId
+                      ? employees.find((e) => e.id === req.swapWithEmployeeId)
+                      : null;
+                    const canApproveThisRow =
+                      canApprove &&
+                      req.status === 'Đang chờ' &&
+                      (req.employeeId !== currentAccount.employeeId ||
+                        currentAccount.roleId === 'super_admin');
+
                     return (
                       <tr
                         key={req.id}
@@ -169,11 +353,22 @@ export const RequestsView: React.FC = () => {
                           {req.type === 'Đổi ca trực' && req.targetShiftCode && (
                             <span className="inline-flex items-center mt-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-semibold">
                               🔄 Đổi sang ca: {req.targetShiftCode.toUpperCase()}
+                              {swapEmp ? ` (với ${swapEmp.name})` : ''}
                             </span>
                           )}
                           {req.type === 'Ứng lương nhanh' && req.advanceAmount && (
                             <span className="inline-flex items-center mt-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold">
                               💸 Tạm ứng: {req.advanceAmount.toLocaleString('vi-VN')} ₫
+                            </span>
+                          )}
+                          {req.type === 'Đăng ký tăng ca' && req.otHours && (
+                            <span className="inline-flex items-center mt-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[10px] font-semibold">
+                              ⏱️ Tăng ca: +{req.otHours} giờ
+                            </span>
+                          )}
+                          {req.type === 'Bổ sung chấm công' && req.checkInTime && (
+                            <span className="inline-flex items-center mt-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-mono">
+                              🕒 {req.checkInTime} - {req.checkOutTime || '17:30'}
                             </span>
                           )}
                         </td>
@@ -197,7 +392,14 @@ export const RequestsView: React.FC = () => {
                           </div>
                         </td>
                         <td className="py-3.5 px-4 font-medium text-slate-600">
-                          {req.startDate} → {req.endDate}
+                          <div>
+                            {req.startDate} → {req.endDate}
+                          </div>
+                          {req.days && (
+                            <div className="text-[10.5px] text-slate-400">
+                              {req.days} ngày
+                            </div>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 text-slate-600 max-w-md">
                           {req.reason}
@@ -215,37 +417,39 @@ export const RequestsView: React.FC = () => {
                             {req.status}
                           </span>
                         </td>
-                        <td className="py-3.5 px-5 text-right">
-                          {req.status === 'Đang chờ' ? (
-                            <div className="inline-flex items-center gap-1.5">
-                              <button
-                                onClick={() =>
-                                  approveOrRejectRequest(req.id, 'Đã duyệt')
-                                }
-                                title="Duyệt đơn một chạm"
-                                className="w-7 h-7 rounded-lg bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white border border-emerald-200 flex items-center justify-center transition cursor-pointer"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() =>
-                                  approveOrRejectRequest(req.id, 'Từ chối')
-                                }
-                                title="Từ chối đơn"
-                                className="w-7 h-7 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 flex items-center justify-center transition cursor-pointer"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-slate-400">
-                              Đã xử lý
-                            </span>
-                          )}
-                        </td>
+                        {canApprove && (
+                          <td className="py-3.5 px-5 text-right">
+                            {canApproveThisRow ? (
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  onClick={() =>
+                                    approveOrRejectRequest(req.id, 'Đã duyệt')
+                                  }
+                                  title="Duyệt đơn một chạm"
+                                  className="w-7 h-7 rounded-lg bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white border border-emerald-200 flex items-center justify-center transition cursor-pointer"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    approveOrRejectRequest(req.id, 'Từ chối')
+                                  }
+                                  title="Từ chối đơn"
+                                  className="w-7 h-7 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 flex items-center justify-center transition cursor-pointer"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">
+                                {req.status === 'Đang chờ' ? 'Đơn cá nhân' : 'Đã xử lý'}
+                              </span>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     );
-                  }
+                  })
                 )}
               </tbody>
             </table>
@@ -253,78 +457,45 @@ export const RequestsView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 3: Company Leave Calendar (Lịch nghỉ công ty - Matches 00:33 - 00:34 in video) */}
+      {/* Tab 3: Dynamic Company Leave Calendar */}
       {subTab === 'calendar' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-2xs">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-base font-bold text-slate-900">
-                Lịch nghỉ toàn công ty
+                Lịch nghỉ toàn công ty (Đồng bộ tự động từ đơn từ)
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                01/10/2026 - 01/11/2026 · 3 đơn nghỉ &amp; công tác trong tháng
+                01/10/2026 - 31/10/2026 · {totalCalendarRequestsCount} đơn nghỉ phép, nghỉ ốm &amp; công tác trong phạm vi
               </p>
             </div>
             <div className="flex items-center gap-1.5">
-              <button className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600">
+              <button
+                onClick={() => setCalendarWinIdx((p) => Math.max(0, p - 1))}
+                disabled={calendarWinIdx === 0}
+                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 text-slate-600"
+              >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <button className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600">
+              <button
+                onClick={() =>
+                  setCalendarWinIdx((p) =>
+                    Math.min(CALENDAR_WINDOWS.length - 1, p + 1)
+                  )
+                }
+                disabled={calendarWinIdx === CALENDAR_WINDOWS.length - 1}
+                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 text-slate-600"
+              >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-7 gap-2.5">
-            {[
-              { label: 'T5 8', items: [] },
-              {
-                label: 'T6 9',
-                items: [
-                  { name: 'Trần Quang An 32', type: 'Công tác', color: 'amber' },
-                ],
-              },
-              {
-                label: 'T7 10',
-                items: [
-                  { name: 'Trần Quang An 32', type: 'Công tác', color: 'amber' },
-                  {
-                    name: 'Phạm Quang An 34',
-                    type: 'Nghỉ phép năm',
-                    color: 'emerald',
-                  },
-                ],
-              },
-              {
-                label: 'CN 11',
-                isSun: true,
-                items: [
-                  {
-                    name: 'Phạm Quang An 34',
-                    type: 'Nghỉ phép năm',
-                    color: 'emerald',
-                  },
-                ],
-              },
-              { label: 'T2 12', items: [] },
-              { label: 'T3 13', items: [] },
-              { label: 'T4 14', items: [] },
-              {
-                label: 'T5 15',
-                items: [
-                  { name: 'Lê Ngọc Mai', type: 'Nghỉ phép năm', color: 'emerald' },
-                ],
-              },
-              { label: 'T6 16', items: [] },
-              { label: 'T7 17', items: [] },
-              { label: 'CN 18', isSun: true, items: [] },
-              { label: 'T2 19', items: [] },
-              { label: 'T3 20', items: [] },
-              { label: 'T4 21', items: [] },
-            ].map((day, idx) => (
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+            {calendarDaysWithItems.map((day) => (
               <div
-                key={idx}
-                className="min-h-[110px] p-3 rounded-xl border border-slate-200/90 bg-slate-50/30 flex flex-col justify-between"
+                key={day.iso}
+                className="min-h-[115px] p-3 rounded-xl border border-slate-200/90 bg-slate-50/30 flex flex-col justify-between"
               >
                 <div
                   className={`text-xs font-bold ${
@@ -334,9 +505,9 @@ export const RequestsView: React.FC = () => {
                   {day.label}
                 </div>
                 <div className="space-y-1.5 mt-2">
-                  {day.items.map((it, i) => (
+                  {day.items.map((it) => (
                     <div
-                      key={i}
+                      key={it.id}
                       className={`p-1.5 rounded-lg text-[11px] leading-tight border ${
                         it.color === 'amber'
                           ? 'bg-amber-50/80 border-amber-200 text-amber-800'
@@ -344,7 +515,9 @@ export const RequestsView: React.FC = () => {
                       }`}
                     >
                       <div className="font-bold truncate">{it.name}</div>
-                      <div className="text-[10px] opacity-80">{it.type}</div>
+                      <div className="text-[10px] opacity-80">
+                        {it.type} ({it.status})
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -354,7 +527,7 @@ export const RequestsView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 4: Annual Leave Balances (Số dư phép - Matches 00:31 - 00:32 in video) */}
+      {/* Tab 4: Annual Leave Balances */}
       {subTab === 'balance' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-2xs">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -371,13 +544,15 @@ export const RequestsView: React.FC = () => {
               <select className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold bg-slate-50">
                 <option value="2026">2026</option>
               </select>
-              <button
-                onClick={() => allocateAnnualLeave(2026)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Cấp phép năm</span>
-              </button>
+              {canAllocateLeave && (
+                <button
+                  onClick={() => allocateAnnualLeave(2026)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Cấp phép năm</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -391,12 +566,14 @@ export const RequestsView: React.FC = () => {
                   sách.
                 </span>
               </div>
-              <button
-                onClick={() => allocateAnnualLeave(2026)}
-                className="font-bold text-amber-800 underline shrink-0"
-              >
-                Cấp ngay
-              </button>
+              {canAllocateLeave && (
+                <button
+                  onClick={() => allocateAnnualLeave(2026)}
+                  className="font-bold text-amber-800 underline shrink-0"
+                >
+                  Cấp ngay
+                </button>
+              )}
             </div>
           )}
 
@@ -415,21 +592,25 @@ export const RequestsView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
-                {scopedEmployees.slice(0, 18).map((emp) => {
+                {displayedBalanceEmps.map((emp) => {
                   const lb = leaveBalances.find(
                     (b) => b.employeeId === emp.id
                   ) || {
                     annualQuota: 12,
-                    carriedOver: 1,
-                    used: 2,
+                    carriedOver: 0,
+                    used: 0,
                     pending: 0,
+                    allocated: true,
                   };
                   const remaining =
                     lb.annualQuota + lb.carriedOver - lb.used - lb.pending;
                   return (
                     <tr key={emp.id} className="hover:bg-slate-50/70">
                       <td className="py-3 px-4 font-semibold text-slate-800">
-                        {emp.name}
+                        {emp.name}{' '}
+                        <span className="text-[11px] font-normal text-slate-400">
+                          ({emp.code})
+                        </span>
                       </td>
                       <td className="py-3 px-3 text-center font-medium text-slate-700">
                         {lb.annualQuota}
@@ -452,6 +633,23 @@ export const RequestsView: React.FC = () => {
               </tbody>
             </table>
           </div>
+
+          {scopedEmployees.length > 20 && (
+            <div className="pt-2 flex items-center justify-between text-xs text-slate-500">
+              <span>
+                Đang hiển thị <strong>{displayedBalanceEmps.length}</strong> /{' '}
+                <strong>{scopedEmployees.length}</strong> nhân sự
+              </span>
+              <button
+                onClick={() => setShowAllBalances((p) => !p)}
+                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition"
+              >
+                {showAllBalances
+                  ? 'Thu gọn (20 dòng đầu)'
+                  : `Xem toàn bộ ${scopedEmployees.length} nhân sự`}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -462,7 +660,7 @@ export const RequestsView: React.FC = () => {
           onClick={() => setIsNewModalOpen(false)}
         >
           <div
-            className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-6"
+            className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
@@ -519,46 +717,108 @@ export const RequestsView: React.FC = () => {
                 </select>
               </div>
               {newType === 'Đổi ca trực' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Ca muốn đổi sang
-                  </label>
-                  <select
-                    value={newTargetShift}
-                    onChange={(e) =>
-                      setNewTargetShift(
-                        e.target.value as 'sang' | 'chieu' | 'hanh_chinh' | 'ca_gay'
-                      )
-                    }
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold bg-indigo-50/50 text-indigo-900"
-                  >
-                    <option value="sang">Ca Sáng (06:00 - 14:00)</option>
-                    <option value="chieu">Ca Chiều (14:00 - 22:00)</option>
-                    <option value="hanh_chinh">Hành chính (08:00 - 17:30)</option>
-                    <option value="ca_gay">Ca gãy (08:00 - 21:00)</option>
-                  </select>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Ca muốn đổi sang
+                    </label>
+                    <select
+                      value={newTargetShift}
+                      onChange={(e) =>
+                        setNewTargetShift(e.target.value as ShiftCode)
+                      }
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold bg-indigo-50/50 text-indigo-900"
+                    >
+                      <option value="sang">Ca Sáng (06:00 - 14:00)</option>
+                      <option value="chieu">Ca Chiều (14:00 - 22:00)</option>
+                      <option value="hanh_chinh">Hành chính (08:00 - 17:30)</option>
+                      <option value="ca_gay">Ca gãy (08:00 - 21:00)</option>
+                      <option value="dem">Ca Đêm (22:00 - 06:00)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Nhân viên đổi ca cùng (Tuỳ chọn)
+                    </label>
+                    <select
+                      value={newSwapWithEmpId}
+                      onChange={(e) => setNewSwapWithEmpId(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs bg-white"
+                    >
+                      <option value="">-- Không đổi chéo (Chỉ đổi ca của tôi) --</option>
+                      {employees
+                        .filter((e) => e.id !== newEmpId && e.status !== 'Đã nghỉ')
+                        .map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name} ({e.code} · {e.department})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
                 </div>
               )}
               {newType === 'Ứng lương nhanh' && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Số tiền tạm ứng trước (Tối đa 30% lương tích lũy)
+                    Số tiền tạm ứng trước (Tối đa 50% lương cơ bản)
                   </label>
                   <input
                     type="number"
                     step={500000}
                     min={500000}
-                    max={10000000}
+                    max={15000000}
                     value={newAdvanceAmount}
                     onChange={(e) => setNewAdvanceAmount(Number(e.target.value))}
                     className="w-full px-3.5 py-2 rounded-xl border border-emerald-300 bg-emerald-50/40 text-xs font-bold text-emerald-800"
                   />
                 </div>
               )}
+              {newType === 'Đăng ký tăng ca' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Số giờ tăng ca (OT)
+                  </label>
+                  <input
+                    type="number"
+                    step={0.5}
+                    min={0.5}
+                    max={12}
+                    value={newOtHours}
+                    onChange={(e) => setNewOtHours(Number(e.target.value))}
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-bold"
+                  />
+                </div>
+              )}
+              {newType === 'Bổ sung chấm công' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Giờ vào thực tế
+                    </label>
+                    <input
+                      type="time"
+                      value={newCheckInTime}
+                      onChange={(e) => setNewCheckInTime(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Giờ ra thực tế
+                    </label>
+                    <input
+                      type="time"
+                      value={newCheckOutTime}
+                      onChange={(e) => setNewCheckOutTime(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs"
+                    />
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Từ ngày
+                    Từ ngày (DD/MM/YYYY)
                   </label>
                   <input
                     type="text"
@@ -569,7 +829,7 @@ export const RequestsView: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Đến ngày
+                    Đến ngày ({computedDaysPreview} ngày)
                   </label>
                   <input
                     type="text"

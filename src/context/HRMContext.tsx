@@ -1,10 +1,12 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Announcement,
   AttendanceRecord,
   AuditLogEntry,
   BonusDeductionItem,
+  DepartmentName,
   Employee,
+  EmployeeStatus,
   LeaveBalance,
   LeaveOrOtRequest,
   MonthlyTimesheetRow,
@@ -35,19 +37,25 @@ import {
   INITIAL_TIMESHEETS,
   SHIFT_TEMPLATES,
 } from '../data/seedData';
-import { sanitizeTextInput } from '../utils/helpers';
+import {
+  calculateCheckInLateAndOt,
+  calculateInclusiveDays,
+  calculateProgressivePIT,
+  canAccessTab,
+  canApproveRequests,
+  canManageHR,
+  canManagePayroll,
+  canManageSchedules,
+  canManageSettings,
+  derivePeriodFromDate,
+  formatIsoToVN,
+  getTodayIsoDate,
+  normalizePeriodKey,
+  normalizeToIsoDate,
+  sanitizeTextInput,
+} from '../utils/helpers';
 
-function normalizeToIsoDate(dateStr: string): string {
-  if (!dateStr) return '';
-  const trimmed = dateStr.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  const parts = trimmed.split('/');
-  if (parts.length === 3) {
-    const [d, m, y] = parts;
-    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
-  return trimmed;
-}
+export { normalizeToIsoDate };
 
 export function isDateInLeaveRange(isoDate: string, startStr: string, endStr: string): boolean {
   const startIso = normalizeToIsoDate(startStr);
@@ -63,7 +71,19 @@ interface ToastMessage {
   type: 'success' | 'info' | 'warning';
 }
 
-interface HRMContextType {
+const VALID_DEPARTMENTS: DepartmentName[] = [
+  'Kỹ thuật',
+  'Kinh doanh',
+  'Nhân sự',
+  'Kế toán',
+  'Marketing',
+  'Vận hành',
+  'Phòng ban chung',
+];
+
+const VALID_STATUSES: EmployeeStatus[] = ['Chính thức', 'Thử việc', 'Tạm nghỉ', 'Đã nghỉ'];
+
+export interface HRMContextType {
   activeTab: NavTabId;
   setActiveTab: (tab: NavTabId) => void;
   employees: Employee[];
@@ -71,6 +91,8 @@ interface HRMContextType {
   shiftTemplates: ShiftTemplate[];
   shiftAssignments: ShiftAssignment[];
   attendanceRecords: AttendanceRecord[];
+  selectedAttendanceDate: string;
+  setSelectedAttendanceDate: (date: string) => void;
   requests: LeaveOrOtRequest[];
   leaveBalances: LeaveBalance[];
   timesheets: MonthlyTimesheetRow[];
@@ -84,6 +106,10 @@ interface HRMContextType {
   toasts: ToastMessage[];
   showToast: (title: string, description?: string, type?: ToastMessage['type']) => void;
   dismissToast: (id: string) => void;
+  // Sync state
+  isSyncingBackend: boolean;
+  lastSyncedAt: string | null;
+  syncNowWithBackend: () => Promise<boolean>;
   // Modals & Responsive Drawer
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
@@ -106,6 +132,7 @@ interface HRMContextType {
     gpsAccuracy?: number;
     photoUrl?: string;
     note?: string;
+    date?: string;
   }) => void;
   proxyCheckIn: (params: {
     employeeId: string;
@@ -113,18 +140,21 @@ interface HRMContextType {
     checkIn: string;
     checkOut: string;
     reason: string;
+    date?: string;
   }) => void;
-  remindUncheckedEmployees: () => number;
+  remindUncheckedEmployees: (date?: string) => number;
   approveOrRejectRequest: (requestId: string, status: RequestStatus) => void;
-  createRequest: (req: Omit<LeaveOrOtRequest, 'id' | 'status' | 'createdAt'>) => void;
+  createRequest: (req: Omit<LeaveOrOtRequest, 'id' | 'status' | 'createdAt'>) => boolean;
   allocateAnnualLeave: (year: number) => void;
   saveEmployee: (emp: Employee) => void;
+  deleteEmployee: (employeeId: string) => void;
   importEmployees: (newEmps: Partial<Employee>[]) => number;
   generateChecklistTasks: (employeeId: string, type: 'Nhận người mới' | 'Tiễn người nghỉ') => void;
   toggleChecklistTask: (employeeId: string, taskId: string) => void;
   aggregateTimesheet: (period: string) => void;
   toggleConfirmTimesheet: (employeeId: string, period: string) => void;
   lockTimesheetPeriod: (period: string) => void;
+  unlockTimesheetPeriod: (period: string) => void;
   declareBaseSalary: (employeeId: string, baseSalary: number, allowance?: number) => void;
   calculatePayrollForPeriod: (period: string) => void;
   publishPayslipsForPeriod: (period: string) => void;
@@ -145,12 +175,16 @@ interface HRMContextType {
   deleteAnnouncement: (id: string) => void;
   togglePinAnnouncement: (id: string) => void;
   addAccount: (acc: Omit<UserAccount, 'id'>) => void;
+  updateAccount: (acc: UserAccount) => void;
+  deleteAccount: (id: string) => void;
   toggleAccountStatus: (id: string) => void;
   addAuditLog: (action: string, targetType: string, targetDetail: string, actor?: string) => void;
   resetDemoData: () => void;
 }
 
-const STORAGE_KEY = 'phuonghihi_hrm_state_v2';
+export const STORAGE_KEY = 'phuonghihi_hrm_state_v2';
+const SYNC_CHANNEL_NAME = 'phuonghihi_hrm_sync_channel_v2';
+const API_SECRET_TOKEN = 'PHUONGHIHI_API_SECRET_2026';
 
 const HRMContext = createContext<HRMContextType | undefined>(undefined);
 
@@ -179,7 +213,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return 'shifts';
   }, []);
 
-  const [activeTab, setActiveTab] = useState<NavTabId>(initialTab);
+  const [activeTab, setActiveTabState] = useState<NavTabId>(initialTab);
   const [employees, setEmployees] = useState<Employee[]>(() =>
     loadPersisted('employees', INITIAL_EMPLOYEES)
   );
@@ -189,6 +223,9 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() =>
     loadPersisted('attendanceRecords', INITIAL_ATTENDANCE_RECORDS)
+  );
+  const [selectedAttendanceDate, setSelectedAttendanceDate] = useState<string>(() =>
+    getTodayIsoDate()
   );
   const [requests, setRequests] = useState<LeaveOrOtRequest[]>(() =>
     loadPersisted('requests', INITIAL_REQUESTS)
@@ -221,6 +258,14 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadPersisted('announcements', INITIAL_ANNOUNCEMENTS)
   );
 
+  // Sync states
+  const [isSyncingBackend, setIsSyncingBackend] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() =>
+    loadPersisted<string | null>('lastSyncedAt', null)
+  );
+  const channelRef = useRef<BroadcastChannel | null>(null);
+  const isApplyingRemoteUpdate = useRef(false);
+
   // Global UI states
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -228,20 +273,305 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isDoorQrModalOpen, setIsDoorQrModalOpen] = useState(false);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
+  const currentAccount = useMemo(
+    () => accounts.find((a) => a.id === currentAccountId && a.active) || accounts[0],
+    [accounts, currentAccountId]
+  );
+
+  const showToast = useCallback(
+    (title: string, description?: string, type: ToastMessage['type'] = 'success') => {
+      const id = `TOAST-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      setToasts((prev) => [...prev, { id, title, description, type }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 3800);
+    },
+    []
+  );
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Guard activeTab by RBAC permissions
+  const setActiveTab = useCallback(
+    (tab: NavTabId) => {
+      if (currentAccount.roleId === 'door_kiosk') {
+        setIsDoorQrModalOpen(true);
+        return;
+      }
+      if (!canAccessTab(currentAccount.roleId, tab)) {
+        showToast(
+          'Không có quyền truy cập mục này',
+          `Vai trò "${currentAccount.dataScope}" không được phép mở trang này.`,
+          'warning'
+        );
+        return;
+      }
+      setActiveTabState(tab);
+    },
+    [currentAccount, showToast]
+  );
+
+  // Ensure activeTab is valid when role changes
+  useEffect(() => {
+    if (currentAccount.roleId === 'door_kiosk') {
+      setIsDoorQrModalOpen(true);
+      return;
+    }
+    if (!canAccessTab(currentAccount.roleId, activeTab)) {
+      if (currentAccount.roleId === 'accountant') {
+        setActiveTabState('timesheet');
+      } else if (currentAccount.roleId === 'employee') {
+        setActiveTabState('shifts');
+      } else {
+        setActiveTabState('shifts');
+      }
+    }
+  }, [currentAccount, activeTab]);
+
+  // Ensure attendanceRecords exist for selectedAttendanceDate based on shiftAssignments & approved leaves
+  useEffect(() => {
+    if (!selectedAttendanceDate) return;
+    setAttendanceRecords((prev) => {
+      const hasAnyForDate = prev.some((r) => r.date === selectedAttendanceDate);
+      if (hasAnyForDate) return prev;
+      const generated: AttendanceRecord[] = employees.map((emp) => {
+        const leave = requests.find(
+          (r) =>
+            r.employeeId === emp.id &&
+            r.status === 'Đã duyệt' &&
+            (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm') &&
+            isDateInLeaveRange(selectedAttendanceDate, r.startDate, r.endDate)
+        );
+        const assigned = shiftAssignments.find(
+          (a) => a.employeeId === emp.id && a.date === selectedAttendanceDate
+        );
+        if (leave) {
+          return {
+            id: `ATT-${selectedAttendanceDate}-${emp.code}`,
+            employeeId: emp.id,
+            date: selectedAttendanceDate,
+            shiftCode: assigned?.shiftCode,
+            status: 'Nghỉ phép',
+            lateMinutes: 0,
+            otHours: 0,
+          };
+        }
+        if (assigned) {
+          return {
+            id: `ATT-${selectedAttendanceDate}-${emp.code}`,
+            employeeId: emp.id,
+            date: selectedAttendanceDate,
+            shiftCode: assigned.shiftCode,
+            status: 'Chưa chấm',
+            lateMinutes: 0,
+            otHours: 0,
+          };
+        }
+        return {
+          id: `ATT-${selectedAttendanceDate}-${emp.code}`,
+          employeeId: emp.id,
+          date: selectedAttendanceDate,
+          status: 'Không có ca',
+          lateMinutes: 0,
+          otHours: 0,
+        };
+      });
+      return [...prev, ...generated];
+    });
+  }, [selectedAttendanceDate, employees, shiftAssignments, requests]);
+
+  // Multi-tab BroadcastChannel & storage event listener
+  useEffect(() => {
+    const applyKeyUpdate = (key: string, val: unknown) => {
+      if (!val) return;
+      isApplyingRemoteUpdate.current = true;
+      try {
+        switch (key) {
+          case 'employees':
+            setEmployees(val as Employee[]);
+            break;
+          case 'shiftAssignments':
+            setShiftAssignments(val as ShiftAssignment[]);
+            break;
+          case 'attendanceRecords':
+            setAttendanceRecords(val as AttendanceRecord[]);
+            break;
+          case 'requests':
+            setRequests(val as LeaveOrOtRequest[]);
+            break;
+          case 'leaveBalances':
+            setLeaveBalances(val as LeaveBalance[]);
+            break;
+          case 'timesheets':
+            setTimesheets(val as MonthlyTimesheetRow[]);
+            break;
+          case 'payrollPeriods':
+            setPayrollPeriods(val as PayrollPeriodState[]);
+            break;
+          case 'bonusDeductions':
+            setBonusDeductions(val as BonusDeductionItem[]);
+            break;
+          case 'settings':
+            setSettings(val as SystemSettings);
+            break;
+          case 'accounts':
+            setAccounts(val as UserAccount[]);
+            break;
+          case 'auditLogs':
+            setAuditLogs(val as AuditLogEntry[]);
+            break;
+          case 'announcements':
+            setAnnouncements(val as Announcement[]);
+            break;
+        }
+      } finally {
+        setTimeout(() => {
+          isApplyingRemoteUpdate.current = false;
+        }, 20);
+      }
+    };
+
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel(SYNC_CHANNEL_NAME);
+      channelRef.current = bc;
+      bc.onmessage = (ev) => {
+        if (ev.data && ev.data.key) {
+          applyKeyUpdate(ev.data.key, ev.data.value);
+        }
+      };
+    }
+
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || !e.key.startsWith(`${STORAGE_KEY}_`) || !e.newValue) return;
+      const shortKey = e.key.slice(`${STORAGE_KEY}_`.length);
+      try {
+        const parsed = JSON.parse(e.newValue);
+        applyKeyUpdate(shortKey, parsed);
+      } catch {
+        // ignore parse error
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      if (channelRef.current) {
+        channelRef.current.close();
+        channelRef.current = null;
+      }
+    };
+  }, []);
+
+  const broadcastAndPersist = useCallback(<T,>(key: string, value: T) => {
+    savePersisted(key, value);
+    if (!isApplyingRemoteUpdate.current && channelRef.current) {
+      try {
+        channelRef.current.postMessage({ key, value });
+      } catch {
+        // ignore channel post error
+      }
+    }
+  }, []);
+
   // Persist changes
-  useEffect(() => savePersisted('employees', employees), [employees]);
-  useEffect(() => savePersisted('shiftAssignments', shiftAssignments), [shiftAssignments]);
-  useEffect(() => savePersisted('attendanceRecords', attendanceRecords), [attendanceRecords]);
-  useEffect(() => savePersisted('requests', requests), [requests]);
-  useEffect(() => savePersisted('leaveBalances', leaveBalances), [leaveBalances]);
-  useEffect(() => savePersisted('timesheets', timesheets), [timesheets]);
-  useEffect(() => savePersisted('payrollPeriods', payrollPeriods), [payrollPeriods]);
-  useEffect(() => savePersisted('bonusDeductions', bonusDeductions), [bonusDeductions]);
-  useEffect(() => savePersisted('settings', settings), [settings]);
-  useEffect(() => savePersisted('accounts', accounts), [accounts]);
+  useEffect(() => broadcastAndPersist('employees', employees), [employees, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('shiftAssignments', shiftAssignments), [shiftAssignments, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('attendanceRecords', attendanceRecords), [attendanceRecords, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('requests', requests), [requests, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('leaveBalances', leaveBalances), [leaveBalances, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('timesheets', timesheets), [timesheets, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('payrollPeriods', payrollPeriods), [payrollPeriods, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('bonusDeductions', bonusDeductions), [bonusDeductions, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('settings', settings), [settings, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('accounts', accounts), [accounts, broadcastAndPersist]);
   useEffect(() => savePersisted('currentAccountId', currentAccountId), [currentAccountId]);
-  useEffect(() => savePersisted('auditLogs', auditLogs), [auditLogs]);
-  useEffect(() => savePersisted('announcements', announcements), [announcements]);
+  useEffect(() => broadcastAndPersist('auditLogs', auditLogs), [auditLogs, broadcastAndPersist]);
+  useEffect(() => broadcastAndPersist('announcements', announcements), [announcements, broadcastAndPersist]);
+  useEffect(() => savePersisted('lastSyncedAt', lastSyncedAt), [lastSyncedAt]);
+
+  // Sync with backend REST API (/api/state) or Google Sheets Web App
+  const syncNowWithBackend = useCallback(async (): Promise<boolean> => {
+    setIsSyncingBackend(true);
+    const payload = {
+      employees,
+      shiftAssignments,
+      attendanceRecords,
+      requests,
+      leaveBalances,
+      timesheets,
+      payrollPeriods,
+      bonusDeductions,
+      settings,
+      accounts,
+      auditLogs: auditLogs.slice(0, 100),
+      announcements,
+      updatedAt: new Date().toISOString(),
+    };
+
+    let syncedOk = false;
+    try {
+      const res = await fetch('/api/state', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Phuonghihi-Token': API_SECRET_TOKEN,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        syncedOk = true;
+      }
+    } catch {
+      // Local Node server not running or unreachable; fallback to Google Sheets if configured
+    }
+
+    if (
+      settings.googleSheetsWebAppUrl &&
+      settings.googleSheetsWebAppUrl.startsWith('https://script.google.com/')
+    ) {
+      try {
+        await fetch(settings.googleSheetsWebAppUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify({
+            action: 'syncAll',
+            token: API_SECRET_TOKEN,
+            payload,
+          }),
+        });
+        syncedOk = true;
+      } catch {
+        // ignore network error in offline environment
+      }
+    }
+
+    const nowStamp = new Date().toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    setLastSyncedAt(`${nowStamp} ${formatIsoToVN(getTodayIsoDate())}`);
+    setIsSyncingBackend(false);
+    return syncedOk;
+  }, [
+    employees,
+    shiftAssignments,
+    attendanceRecords,
+    requests,
+    leaveBalances,
+    timesheets,
+    payrollPeriods,
+    bonusDeductions,
+    settings,
+    accounts,
+    auditLogs,
+    announcements,
+  ]);
 
   // Global Ctrl+K shortcut
   useEffect(() => {
@@ -255,13 +585,11 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const currentAccount = useMemo(
-    () => accounts.find((a) => a.id === currentAccountId) || accounts[0],
-    [accounts, currentAccountId]
-  );
-
   // Scoped employees based on RBAC role & department
   const scopedEmployees = useMemo(() => {
+    if (currentAccount.roleId === 'door_kiosk' || currentAccount.dataScope === 'Chỉ mở mã QR tại cửa') {
+      return [];
+    }
     if (currentAccount.dataScope === 'Toàn hệ thống') {
       return employees;
     }
@@ -271,52 +599,42 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentAccount.dataScope === 'Của bản thân') {
       return employees.filter((e) => e.id === currentAccount.employeeId);
     }
-    return employees;
+    return employees.filter((e) => e.id === currentAccount.employeeId);
   }, [employees, currentAccount]);
 
-  const showToast = (
-    title: string,
-    description?: string,
-    type: ToastMessage['type'] = 'success'
-  ) => {
-    const id = `TOAST-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    setToasts((prev) => [...prev, { id, title, description, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3800);
-  };
-
-  const dismissToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  const formatNowTimestamp = () => {
+  const formatNowTimestamp = useCallback(() => {
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, '0');
     const mm = String(now.getMinutes()).padStart(2, '0');
-    return `${hh}:${mm} 09/10/2026`;
-  };
+    return `${hh}:${mm} ${formatIsoToVN(getTodayIsoDate())}`;
+  }, []);
 
-  const addAuditLog = (
-    action: string,
-    targetType: string,
-    targetDetail: string,
-    actor?: string
-  ) => {
-    const newEntry: AuditLogEntry = {
-      id: `LOG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: formatNowTimestamp(),
-      actor: actor || currentAccount.email || 'admin@phuonghihi',
-      action,
-      targetType,
-      targetDetail,
-    };
-    setAuditLogs((prev) => [newEntry, ...prev]);
-  };
+  const addAuditLog = useCallback(
+    (action: string, targetType: string, targetDetail: string, actor?: string) => {
+      const newEntry: AuditLogEntry = {
+        id: `LOG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: formatNowTimestamp(),
+        actor: actor || currentAccount.email || 'admin@phuonghihi.vn',
+        action,
+        targetType,
+        targetDetail,
+      };
+      setAuditLogs((prev) => [newEntry, ...prev].slice(0, 500));
+    },
+    [formatNowTimestamp, currentAccount.email]
+  );
 
   const switchAccount = (accountId: string) => {
     const target = accounts.find((a) => a.id === accountId);
     if (!target) return;
+    if (!target.active) {
+      showToast(
+        `Tài khoản ${target.name} đang bị khoá!`,
+        'Vui lòng mở khoá tài khoản trong mục Phân quyền trước khi chuyển đổi.',
+        'warning'
+      );
+      return;
+    }
     setCurrentAccountId(accountId);
     if (target.roleId === 'door_kiosk') {
       setIsDoorQrModalOpen(true);
@@ -328,22 +646,48 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const hasApprovedLeaveOnDate = (employeeId: string, isoDate: string): LeaveOrOtRequest | undefined => {
-    return requests.find(
-      (r) =>
-        r.employeeId === employeeId &&
-        r.status === 'Đã duyệt' &&
-        (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm') &&
-        isDateInLeaveRange(isoDate, r.startDate, r.endDate)
-    );
-  };
+  const hasApprovedLeaveOnDate = useCallback(
+    (employeeId: string, isoDate: string): LeaveOrOtRequest | undefined => {
+      return requests.find(
+        (r) =>
+          r.employeeId === employeeId &&
+          r.status === 'Đã duyệt' &&
+          (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm') &&
+          isDateInLeaveRange(isoDate, r.startDate, r.endDate)
+      );
+    },
+    [requests]
+  );
 
   const assignShift = (employeeId: string, date: string, shiftCode: ShiftCode | null) => {
+    if (!canManageSchedules(currentAccount.roleId)) {
+      showToast('Không có quyền phân ca!', 'Chỉ Quản trị viên, Nhân sự hoặc Quản lý mới được xếp ca.', 'warning');
+      return;
+    }
+    const existing = shiftAssignments.find((a) => a.employeeId === employeeId && a.date === date);
+    if ((existing?.shiftCode || null) === (shiftCode || null)) {
+      return; // Skip no-op assignment to avoid polluting audit log
+    }
+
     setShiftAssignments((prev) => {
       const filtered = prev.filter((a) => !(a.employeeId === employeeId && a.date === date));
       if (!shiftCode) return filtered;
       return [...filtered, { employeeId, date, shiftCode }];
     });
+
+    // Keep un-checked attendance record for that date in sync with shift change
+    setAttendanceRecords((prev) =>
+      prev.map((r) => {
+        if (r.employeeId === employeeId && r.date === date && !r.checkIn) {
+          if (!shiftCode) {
+            return { ...r, shiftCode: undefined, status: 'Không có ca' };
+          }
+          return { ...r, shiftCode, status: r.status === 'Không có ca' ? 'Chưa chấm' : r.status };
+        }
+        return r;
+      })
+    );
+
     const emp = employees.find((e) => e.id === employeeId);
     addAuditLog(
       'Phân ca',
@@ -357,6 +701,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     dates: string[],
     shiftCode: ShiftCode | null
   ) => {
+    if (!canManageSchedules(currentAccount.roleId)) {
+      showToast('Không có quyền phân ca hàng loạt!', undefined, 'warning');
+      return;
+    }
     const empSet = new Set(employeeIds);
     const dateSet = new Set(dates);
     setShiftAssignments((prev) => {
@@ -370,6 +718,18 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       return [...filtered, ...additions];
     });
+
+    // Sync attendanceRecords for unchecked dates
+    setAttendanceRecords((prev) =>
+      prev.map((r) => {
+        if (empSet.has(r.employeeId) && dateSet.has(r.date) && !r.checkIn) {
+          if (!shiftCode) return { ...r, shiftCode: undefined, status: 'Không có ca' };
+          return { ...r, shiftCode, status: r.status === 'Không có ca' ? 'Chưa chấm' : r.status };
+        }
+        return r;
+      })
+    );
+
     addAuditLog(
       'Phân ca hàng loạt',
       'Phân ca',
@@ -382,6 +742,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const autoScheduleWeekWithAI = (dates: string[]) => {
+    if (!canManageSchedules(currentAccount.roleId)) {
+      showToast('Không có quyền chạy AI xếp ca!', undefined, 'warning');
+      return { assignedCount: 0, skippedLeaveCount: 0 };
+    }
     const activeScoped = scopedEmployees.filter((e) => e.status !== 'Đã nghỉ');
     const empSet = new Set(activeScoped.map((e) => e.id));
     const dateSet = new Set(dates);
@@ -397,7 +761,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           skippedLeaveCount++;
           return;
         }
-        const dayOfWeek = new Date(isoDate).getDay(); // 0 = Sunday, 6 = Saturday
+        const [y, m, d] = isoDate.split('-').map(Number);
+        const dayOfWeek = new Date(y, (m || 1) - 1, d || 1).getDay(); // 0 = Sunday, 6 = Saturday
         const isOfficeDept =
           emp.department === 'Nhân sự' ||
           emp.department === 'Kế toán' ||
@@ -453,6 +818,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     gpsAccuracy = 12,
     photoUrl,
     note,
+    date,
   }: {
     employeeId: string;
     method: NonNullable<AttendanceRecord['method']>;
@@ -460,26 +826,84 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     gpsAccuracy?: number;
     photoUrl?: string;
     note?: string;
+    date?: string;
   }) => {
+    const emp = employees.find((e) => e.id === employeeId);
+    const targetDate = date || getTodayIsoDate();
+
+    // Validate attendance method against system settings
+    if (method === 'GPS' && !settings.gpsEnabled) {
+      showToast('Chấm công GPS đang tạm tắt!', 'Quản trị viên đã tắt hình thức chấm công GPS trong Cài đặt.', 'warning');
+      return;
+    }
+    if (method === 'QR tại cửa' && !settings.qrEnabled) {
+      showToast('Chấm công Mã QR đang tạm tắt!', 'Quản trị viên đã tắt hình thức chấm công QR trong Cài đặt.', 'warning');
+      return;
+    }
+    if (method === 'Từ xa') {
+      if (!settings.remoteEnabled) {
+        showToast('Chấm công từ xa đang tắt!', 'Hệ thống hiện không cho phép chấm công ngoài vùng văn phòng.', 'warning');
+        return;
+      }
+      if (emp && !emp.allowRemote) {
+        showToast(
+          'Chưa được cấp quyền chấm công từ xa!',
+          `Nhân viên ${emp.name} cần có mặt trong bán kính ${settings.allowedRadiusMeters}m tại cửa hàng.`,
+          'warning'
+        );
+        return;
+      }
+    }
+
+    const existingForDate = attendanceRecords.find(
+      (r) => r.employeeId === employeeId && r.date === targetDate
+    );
+    if (existingForDate?.checkIn && existingForDate?.checkOut) {
+      showToast(
+        'Đã hoàn tất chấm công trong ngày!',
+        `${emp?.name || employeeId} đã chấm vào (${existingForDate.checkIn}) và chấm ra (${existingForDate.checkOut}).`,
+        'info'
+      );
+      return;
+    }
+
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(
       now.getMinutes()
     ).padStart(2, '0')}`;
-    const emp = employees.find((e) => e.id === employeeId);
     const cleanNote = note ? sanitizeTextInput(note, 300) : undefined;
 
+    const assignedShift =
+      existingForDate?.shiftCode ||
+      shiftAssignments.find((a) => a.employeeId === employeeId && a.date === targetDate)?.shiftCode ||
+      'hanh_chinh';
+    const shiftTpl = shiftTemplates.find((s) => s.code === assignedShift) || shiftTemplates[0];
+
+    const isCheckingOut = Boolean(existingForDate?.checkIn && !existingForDate?.checkOut);
+    const nextCheckIn = existingForDate?.checkIn || timeStr;
+    const nextCheckOut = isCheckingOut ? timeStr : existingForDate?.checkOut;
+
+    const { lateMinutes, otHours, status } = calculateCheckInLateAndOt({
+      checkIn: nextCheckIn,
+      checkOut: nextCheckOut,
+      shiftStart: shiftTpl.startTime,
+      shiftEnd: shiftTpl.endTime,
+      graceMinutes: 0,
+    });
+
     setAttendanceRecords((prev) => {
-      const existing = prev.find((r) => r.employeeId === employeeId && r.date === '2026-10-09');
+      const existing = prev.find((r) => r.employeeId === employeeId && r.date === targetDate);
       if (existing) {
-        const isCheckingOut = Boolean(existing.checkIn && !existing.checkOut);
         return prev.map((r) =>
           r.id === existing.id
             ? {
                 ...r,
-                shiftCode: r.shiftCode || 'hanh_chinh',
-                checkIn: r.checkIn || timeStr,
-                checkOut: isCheckingOut ? timeStr : r.checkOut,
-                status: r.status === 'Chưa chấm' || r.status === 'Không có ca' ? 'Đúng giờ' : r.status,
+                shiftCode: assignedShift,
+                checkIn: nextCheckIn,
+                checkOut: nextCheckOut,
+                status,
+                lateMinutes,
+                otHours,
                 method,
                 distanceMeters,
                 gpsAccuracy,
@@ -492,14 +916,15 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [
         ...prev,
         {
-          id: `ATT-2026-10-09-${employeeId}`,
+          id: `ATT-${targetDate}-${employeeId}`,
           employeeId,
-          date: '2026-10-09',
-          shiftCode: 'hanh_chinh',
-          checkIn: timeStr,
-          status: 'Đúng giờ',
-          lateMinutes: 0,
-          otHours: 0,
+          date: targetDate,
+          shiftCode: assignedShift,
+          checkIn: nextCheckIn,
+          checkOut: nextCheckOut,
+          status,
+          lateMinutes,
+          otHours,
           method,
           distanceMeters,
           gpsAccuracy,
@@ -510,13 +935,15 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     addAuditLog(
-      'Chấm công',
+      isCheckingOut ? 'Chấm công ra' : 'Chấm công vào',
       'Điểm danh',
-      `${emp?.name || employeeId} · ${method} (${distanceMeters}m)`
+      `${emp?.name || employeeId} · ${method} (${distanceMeters}m) · ${targetDate}`
     );
     showToast(
-      `Chấm công thành công lúc ${timeStr}!`,
-      `${emp?.name || employeeId} · Hình thức: ${method} (Cách văn phòng ${distanceMeters}m)`
+      `${isCheckingOut ? 'Chấm công ra' : 'Chấm công vào'} thành công lúc ${timeStr}!`,
+      `${emp?.name || employeeId} · ${method} (${distanceMeters}m)${
+        lateMinutes > 0 ? ` · Đi muộn ${lateMinutes} phút` : ' · Đúng giờ'
+      }`
     );
   };
 
@@ -526,69 +953,164 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     checkIn,
     checkOut,
     reason,
+    date,
   }: {
     employeeId: string;
     shiftCode: ShiftCode;
     checkIn: string;
     checkOut: string;
     reason: string;
+    date?: string;
   }) => {
+    if (!settings.manualProxyEnabled) {
+      showToast('Chấm công hộ đang tắt!', 'Vui lòng bật cho phép chấm công hộ trong Cài đặt.', 'warning');
+      return;
+    }
+    if (!canManageSchedules(currentAccount.roleId)) {
+      showToast('Không có quyền chấm công hộ!', undefined, 'warning');
+      return;
+    }
+    if (shiftCode !== 'dem' && checkIn && checkOut && checkIn >= checkOut) {
+      showToast('Giờ chấm công không hợp lệ!', 'Giờ ra phải lớn hơn giờ vào ca trực.', 'warning');
+      return;
+    }
+
+    const targetDate = date || selectedAttendanceDate || getTodayIsoDate();
     const cleanReason = sanitizeTextInput(reason, 300);
     const emp = employees.find((e) => e.id === employeeId);
+    const shiftTpl = shiftTemplates.find((s) => s.code === shiftCode) || shiftTemplates[0];
+    const { lateMinutes, otHours, status } = calculateCheckInLateAndOt({
+      checkIn,
+      checkOut,
+      shiftStart: shiftTpl.startTime,
+      shiftEnd: shiftTpl.endTime,
+      graceMinutes: 0,
+    });
+
+    setAttendanceRecords((prev) => {
+      const exists = prev.some((r) => r.employeeId === employeeId && r.date === targetDate);
+      if (exists) {
+        return prev.map((r) =>
+          r.employeeId === employeeId && r.date === targetDate
+            ? {
+                ...r,
+                shiftCode,
+                checkIn,
+                checkOut,
+                status,
+                lateMinutes,
+                otHours,
+                method: 'Chấm hộ',
+                note: cleanReason,
+              }
+            : r
+        );
+      }
+      return [
+        ...prev,
+        {
+          id: `ATT-${targetDate}-${employeeId}`,
+          employeeId,
+          date: targetDate,
+          shiftCode,
+          checkIn,
+          checkOut,
+          status,
+          lateMinutes,
+          otHours,
+          method: 'Chấm hộ',
+          note: cleanReason,
+        },
+      ];
+    });
+
+    addAuditLog(
+      'Chấm công hộ',
+      'Điểm danh',
+      `${emp?.name || employeeId} (${checkIn} - ${checkOut}) · Ngày ${targetDate} · Lý do: ${cleanReason}`
+    );
+    showToast(
+      `Đã chấm công hộ cho ${emp?.name || employeeId}`,
+      `Giờ vào/ra: ${checkIn} - ${checkOut} (${formatIsoToVN(targetDate)}) · Đã ghi nhật ký hệ thống.`
+    );
+  };
+
+  const remindUncheckedEmployees = (date?: string) => {
+    const targetDate = date || selectedAttendanceDate || getTodayIsoDate();
+    const scopedIds = new Set(scopedEmployees.map((e) => e.id));
+    const unchecked = attendanceRecords.filter(
+      (r) => r.date === targetDate && r.status === 'Chưa chấm' && scopedIds.has(r.employeeId)
+    );
+    const nowTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
     setAttendanceRecords((prev) =>
       prev.map((r) =>
-        r.employeeId === employeeId && r.date === '2026-10-09'
-          ? {
-              ...r,
-              shiftCode,
-              checkIn,
-              checkOut,
-              status: 'Đúng giờ',
-              method: 'Chấm hộ',
-              note: cleanReason,
-            }
+        r.date === targetDate && r.status === 'Chưa chấm' && scopedIds.has(r.employeeId)
+          ? { ...r, remindedAt: nowTime }
           : r
       )
     );
     addAuditLog(
-      'Chấm công hộ',
-      'Điểm danh',
-      `${emp?.name || employeeId} (${checkIn} - ${checkOut}) · Lý do: ${cleanReason}`
-    );
-    showToast(
-      `Đã chấm công hộ cho ${emp?.name || employeeId}`,
-      `Giờ vào/ra: ${checkIn} - ${checkOut} · Đã ghi nhật ký hệ thống.`
-    );
-  };
-
-  const remindUncheckedEmployees = () => {
-    const unchecked = attendanceRecords.filter((r) => r.status === 'Chưa chấm');
-    const nowTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-    setAttendanceRecords((prev) =>
-      prev.map((r) => (r.status === 'Chưa chấm' ? { ...r, remindedAt: nowTime } : r))
-    );
-    addAuditLog(
       'Gửi nhắc chấm công',
       'Điểm danh',
-      `Đã nhắc ${unchecked.length} nhân viên chưa chấm công ngày 09/10/2026`
+      `Đã nhắc ${unchecked.length} nhân viên chưa chấm công ngày ${formatIsoToVN(targetDate)}`
     );
     showToast(
       `Đã gửi nhắc nhở tới ${unchecked.length} nhân viên chưa chấm công!`,
-      'Thông báo đẩy trên App và Email nhắc chấm công đã được gửi đi.'
+      `Ngày ${formatIsoToVN(targetDate)}: Thông báo đẩy trên App và Email nhắc chấm công đã được gửi đi.`
     );
     return unchecked.length;
   };
 
   const approveOrRejectRequest = (requestId: string, status: RequestStatus) => {
+    if (!canApproveRequests(currentAccount.roleId)) {
+      showToast('Không có quyền duyệt đơn!', 'Vai trò hiện tại không có quyền phê duyệt hoặc từ chối đơn từ.', 'warning');
+      return;
+    }
+
     const target = requests.find((r) => r.id === requestId);
     if (!target) return;
-    setRequests((prev) => prev.map((r) => (r.id === requestId ? { ...r, status } : r)));
+
+    if (target.status !== 'Đang chờ') {
+      showToast('Đơn từ đã được xử lý!', `Đơn này đã ở trạng thái "${target.status}".`, 'info');
+      return;
+    }
+
+    if (target.employeeId === currentAccount.employeeId && currentAccount.roleId !== 'super_admin') {
+      showToast(
+        'Không thể tự phê duyệt đơn của chính mình!',
+        'Đơn từ cá nhân cần được Quản lý cấp trên hoặc phòng Nhân sự phê duyệt.',
+        'warning'
+      );
+      return;
+    }
 
     const emp = employees.find((e) => e.id === target.employeeId);
+    if (
+      currentAccount.roleId === 'manager' &&
+      currentAccount.department &&
+      emp &&
+      emp.department !== currentAccount.department
+    ) {
+      showToast('Ngoài phạm vi quản lý!', 'Bạn chỉ được duyệt đơn của nhân viên thuộc bộ phận mình.', 'warning');
+      return;
+    }
 
-    if (status === 'Đã duyệt') {
+    setRequests((prev) => prev.map((r) => (r.id === requestId ? { ...r, status } : r)));
+
+    const days = target.days || calculateInclusiveDays(target.startDate, target.endDate);
+
+    if (status === 'Từ chối') {
       if (target.type === 'Nghỉ phép năm') {
-        const days = target.days || 1;
+        setLeaveBalances((prev) =>
+          prev.map((lb) =>
+            lb.employeeId === target.employeeId
+              ? { ...lb, pending: Math.max(0, lb.pending - days) }
+              : lb
+          )
+        );
+      }
+    } else if (status === 'Đã duyệt') {
+      if (target.type === 'Nghỉ phép năm') {
         setLeaveBalances((prev) =>
           prev.map((lb) =>
             lb.employeeId === target.employeeId
@@ -610,27 +1132,124 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               )
           )
         );
+        // Update attendance records on approved leave dates
+        setAttendanceRecords((prev) =>
+          prev.map((r) =>
+            r.employeeId === target.employeeId &&
+            isDateInLeaveRange(r.date, target.startDate, target.endDate)
+              ? { ...r, status: 'Nghỉ phép', lateMinutes: 0 }
+              : r
+          )
+        );
+      } else if (target.type === 'Nghỉ ốm') {
+        setShiftAssignments((prev) =>
+          prev.filter(
+            (a) =>
+              !(
+                a.employeeId === target.employeeId &&
+                isDateInLeaveRange(a.date, target.startDate, target.endDate)
+              )
+          )
+        );
+        setAttendanceRecords((prev) =>
+          prev.map((r) =>
+            r.employeeId === target.employeeId &&
+            isDateInLeaveRange(r.date, target.startDate, target.endDate)
+              ? { ...r, status: 'Nghỉ phép', lateMinutes: 0 }
+              : r
+          )
+        );
       } else if (target.type === 'Đổi ca trực') {
-        const isoDate = normalizeToIsoDate(target.startDate) || '2026-10-10';
+        const isoDate = normalizeToIsoDate(target.startDate) || getTodayIsoDate();
         const nextShift: ShiftCode = target.targetShiftCode || 'chieu';
         setShiftAssignments((prev) => {
-          const withoutTarget = prev.filter(
+          const originalRequesterAssignment = prev.find(
+            (a) => a.employeeId === target.employeeId && a.date === isoDate
+          );
+          const originalShiftCode: ShiftCode = originalRequesterAssignment?.shiftCode || 'chieu';
+          let updated = prev.filter(
             (a) => !(a.employeeId === target.employeeId && a.date === isoDate)
           );
-          return [...withoutTarget, { employeeId: target.employeeId, date: isoDate, shiftCode: nextShift }];
+          updated.push({ employeeId: target.employeeId, date: isoDate, shiftCode: nextShift });
+
+          // Also swap shift for swapWithEmployeeId if specified
+          if (target.swapWithEmployeeId) {
+            updated = updated.filter(
+              (a) => !(a.employeeId === target.swapWithEmployeeId && a.date === isoDate)
+            );
+            updated.push({
+              employeeId: target.swapWithEmployeeId,
+              date: isoDate,
+              shiftCode: originalShiftCode,
+            });
+          }
+          return updated;
         });
+      } else if (target.type === 'Bổ sung chấm công') {
+        const isoDate = normalizeToIsoDate(target.startDate) || getTodayIsoDate();
+        const cIn = target.checkInTime || '08:00';
+        const cOut = target.checkOutTime || '17:30';
+        setAttendanceRecords((prev) => {
+          const exists = prev.some((r) => r.employeeId === target.employeeId && r.date === isoDate);
+          if (exists) {
+            return prev.map((r) =>
+              r.employeeId === target.employeeId && r.date === isoDate
+                ? {
+                    ...r,
+                    checkIn: cIn,
+                    checkOut: cOut,
+                    status: 'Đúng giờ',
+                    lateMinutes: 0,
+                    note: `Đã duyệt bổ sung công: ${target.reason}`,
+                  }
+                : r
+            );
+          }
+          return [
+            ...prev,
+            {
+              id: `ATT-${isoDate}-${target.employeeId}`,
+              employeeId: target.employeeId,
+              date: isoDate,
+              shiftCode: 'hanh_chinh',
+              checkIn: cIn,
+              checkOut: cOut,
+              status: 'Đúng giờ',
+              lateMinutes: 0,
+              otHours: 0,
+              method: 'Chấm hộ',
+              note: `Đã duyệt bổ sung công: ${target.reason}`,
+            },
+          ];
+        });
+      } else if (target.type === 'Đăng ký tăng ca') {
+        const isoDate = normalizeToIsoDate(target.startDate) || getTodayIsoDate();
+        const addedOt = target.otHours || 0;
+        if (addedOt > 0) {
+          setAttendanceRecords((prev) =>
+            prev.map((r) =>
+              r.employeeId === target.employeeId && r.date === isoDate
+                ? { ...r, otHours: (r.otHours || 0) + addedOt }
+                : r
+            )
+          );
+        }
       } else if (target.type === 'Ứng lương nhanh') {
-        const advanceAmt = target.advanceAmount || 3000000;
+        const advanceAmt = Math.max(0, target.advanceAmount || 3000000);
+        const targetPeriod = derivePeriodFromDate(target.startDate, '2026-10');
         const deductionItem: BonusDeductionItem = {
-          id: `BD-ADV-${Date.now()}`,
+          id: `BD-ADV-${requestId}`,
           employeeId: target.employeeId,
-          period: '10/2026',
+          period: targetPeriod,
           type: 'Khấu trừ',
           title: `Tạm ứng lương nhanh qua App (${advanceAmt.toLocaleString('vi-VN')}đ)`,
           amount: advanceAmt,
-          date: '09/10/2026',
+          date: formatIsoToVN(getTodayIsoDate()),
         };
-        setBonusDeductions((prev) => [deductionItem, ...prev]);
+        setBonusDeductions((prev) => {
+          const filtered = prev.filter((b) => b.id !== deductionItem.id);
+          return [deductionItem, ...filtered];
+        });
       }
     }
 
@@ -642,31 +1261,130 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(
       `${status === 'Đã duyệt' ? 'Đã phê duyệt' : 'Đã từ chối'} đơn ${target.type}`,
       status === 'Đã duyệt' && target.type === 'Ứng lương nhanh'
-        ? `Nhân viên: ${emp?.name} · Đã tự động ghi nhận khoản khấu trừ tạm ứng vào kỳ lương 10/2026.`
+        ? `Nhân viên: ${emp?.name} · Đã tự động ghi nhận khoản khấu trừ tạm ứng vào kỳ lương ${derivePeriodFromDate(target.startDate, '2026-10')}.`
         : status === 'Đã duyệt' && target.type === 'Đổi ca trực'
         ? `Nhân viên: ${emp?.name} · Đã tự động cập nhật ca trực mới trên Bảng phân ca.`
         : `Nhân viên: ${emp?.name || target.employeeId}`
     );
   };
 
-  const createRequest = (req: Omit<LeaveOrOtRequest, 'id' | 'status' | 'createdAt'>) => {
+  const createRequest = (req: Omit<LeaveOrOtRequest, 'id' | 'status' | 'createdAt'>): boolean => {
+    const startIso = normalizeToIsoDate(req.startDate);
+    const endIso = normalizeToIsoDate(req.endDate || req.startDate);
+    if (startIso && endIso && startIso > endIso) {
+      showToast(
+        'Ngày kết thúc không hợp lệ!',
+        'Ngày kết thúc đơn phải lớn hơn hoặc bằng ngày bắt đầu.',
+        'warning'
+      );
+      return false;
+    }
+
+    const emp = employees.find((e) => e.id === req.employeeId);
+    const computedDays = req.days ?? calculateInclusiveDays(req.startDate, req.endDate || req.startDate);
+
+    if (req.type === 'Nghỉ phép năm') {
+      const lb = leaveBalances.find((l) => l.employeeId === req.employeeId);
+      if (lb) {
+        const remaining = lb.annualQuota + lb.carriedOver - lb.used - lb.pending;
+        if (!lb.allocated) {
+          showToast(
+            'Chưa được cấp phép năm!',
+            'Nhân viên này chưa được cấp hạn mức phép năm 2026.',
+            'warning'
+          );
+          return false;
+        }
+        if (computedDays > remaining) {
+          showToast(
+            'Vượt quá số dư phép năm khả dụng!',
+            `Bạn yêu cầu nghỉ ${computedDays} ngày nhưng chỉ còn ${remaining} ngày phép khả dụng.`,
+            'warning'
+          );
+          return false;
+        }
+      }
+    }
+
+    if (req.type === 'Ứng lương nhanh') {
+      const amt = Number(req.advanceAmount) || 0;
+      if (amt <= 0) {
+        showToast('Số tiền ứng không hợp lệ!', 'Vui lòng nhập số tiền ứng lớn hơn 0đ.', 'warning');
+        return false;
+      }
+      const maxAdvance = Math.max(3000000, Math.round(((emp?.baseSalary || 15000000) * 0.5)));
+      if (amt > maxAdvance) {
+        showToast(
+          'Vượt hạn mức ứng lương nhanh (EWA)!',
+          `Hạn mức ứng tối đa là ${maxAdvance.toLocaleString('vi-VN')} ₫.`,
+          'warning'
+        );
+        return false;
+      }
+    }
+
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const createdStamp = `${formatIsoToVN(getTodayIsoDate())} ${hh}:${mm}`;
+
     const newReq: LeaveOrOtRequest = {
       ...req,
+      days:
+        req.type === 'Nghỉ phép năm' || req.type === 'Nghỉ ốm' || req.type === 'Công tác'
+          ? computedDays
+          : req.days,
       reason: sanitizeTextInput(req.reason, 400),
       id: `REQ-${Date.now()}`,
       status: 'Đang chờ',
-      createdAt: '09/10/2026 15:45',
+      createdAt: createdStamp,
     };
+
     setRequests((prev) => [newReq, ...prev]);
-    const emp = employees.find((e) => e.id === req.employeeId);
+
+    if (req.type === 'Nghỉ phép năm') {
+      setLeaveBalances((prev) =>
+        prev.map((lb) =>
+          lb.employeeId === req.employeeId
+            ? { ...lb, pending: lb.pending + computedDays }
+            : lb
+        )
+      );
+    }
+
     addAuditLog('Tạo đơn từ', 'Đơn từ', `${req.type} · ${emp?.name || req.employeeId}`);
     showToast('Đã gửi đơn thành công!', `Loại đơn: ${req.type} · Đang chờ quản lý phê duyệt.`);
+    return true;
   };
 
   const allocateAnnualLeave = (year: number) => {
-    setLeaveBalances((prev) =>
-      prev.map((lb) => (lb.year === year ? { ...lb, allocated: true } : lb))
-    );
+    if (!canManageHR(currentAccount.roleId)) {
+      showToast('Không có quyền cấp phép năm!', undefined, 'warning');
+      return;
+    }
+    setLeaveBalances((prev) => {
+      const existingIds = new Set(prev.filter((lb) => lb.year === year).map((lb) => lb.employeeId));
+      const updated = prev.map((lb) =>
+        lb.year === year ? { ...lb, carriedOver: Math.min(5, lb.carriedOver), allocated: true } : lb
+      );
+      const missingBalances: LeaveBalance[] = employees
+        .filter((e) => !existingIds.has(e.id))
+        .map((emp) => {
+          const joinYear = parseInt(emp.joinDate.split('/')[2] || String(year), 10);
+          const yearsWorked = Math.max(0, year - joinYear);
+          const seniorityBonus = Math.floor(yearsWorked / 5);
+          return {
+            employeeId: emp.id,
+            year,
+            annualQuota: 12 + seniorityBonus,
+            carriedOver: 0,
+            used: 0,
+            pending: 0,
+            allocated: true,
+          };
+        });
+      return [...updated, ...missingBalances];
+    });
     addAuditLog('Cấp phép năm', 'Số dư phép', `Cấp phép năm ${year} cho toàn bộ nhân sự`);
     showToast(
       `Đã tính và cấp số dư phép năm ${year}!`,
@@ -675,14 +1393,35 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveEmployee = (emp: Employee) => {
+    const existingEmp = employees.find((e) => e.id === emp.id);
+
+    // RBAC protection: regular employees can only update their own contact details
+    if (!canManageHR(currentAccount.roleId)) {
+      if (emp.id !== currentAccount.employeeId || !existingEmp) {
+        showToast('Không có quyền chỉnh sửa nhân sự!', 'Chỉ bộ phận Nhân sự hoặc Quản trị viên mới được thêm/sửa hồ sơ.', 'warning');
+        return;
+      }
+    }
+
+    const isSelfLimitedEdit = !canManageHR(currentAccount.roleId) && existingEmp;
+
     const sanitizedEmp: Employee = {
       ...emp,
       name: sanitizeTextInput(emp.name, 120),
-      code: sanitizeTextInput(emp.code, 30),
+      code: isSelfLimitedEdit ? existingEmp.code : sanitizeTextInput(emp.code, 30),
       email: sanitizeTextInput(emp.email, 120),
       phone: sanitizeTextInput(emp.phone, 30),
       notes: emp.notes ? sanitizeTextInput(emp.notes, 500) : emp.notes,
+      department: isSelfLimitedEdit ? existingEmp.department : emp.department,
+      position: isSelfLimitedEdit ? existingEmp.position : emp.position,
+      status: isSelfLimitedEdit ? existingEmp.status : emp.status,
+      allowRemote: isSelfLimitedEdit ? existingEmp.allowRemote : emp.allowRemote,
+      baseSalary: isSelfLimitedEdit ? existingEmp.baseSalary : emp.baseSalary,
+      allowance: isSelfLimitedEdit ? existingEmp.allowance : emp.allowance,
+      dependents: isSelfLimitedEdit ? existingEmp.dependents : Math.max(0, Number(emp.dependents) || 0),
+      contracts: isSelfLimitedEdit ? existingEmp.contracts : emp.contracts,
     };
+
     setEmployees((prev) => {
       const exists = prev.some((e) => e.id === sanitizedEmp.id);
       if (exists) {
@@ -690,6 +1429,26 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return [sanitizedEmp, ...prev];
     });
+
+    // Ensure new employee gets a leave balance entry
+    if (!existingEmp) {
+      setLeaveBalances((prev) => {
+        if (prev.some((lb) => lb.employeeId === sanitizedEmp.id)) return prev;
+        return [
+          ...prev,
+          {
+            employeeId: sanitizedEmp.id,
+            year: 2026,
+            annualQuota: 12,
+            carriedOver: 0,
+            used: 0,
+            pending: 0,
+            allocated: true,
+          },
+        ];
+      });
+    }
+
     addAuditLog('Cập nhật hồ sơ', 'Nhân sự', `${sanitizedEmp.name} (${sanitizedEmp.code})`);
     showToast(
       `Đã lưu hồ sơ nhân viên: ${sanitizedEmp.name}`,
@@ -697,34 +1456,102 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
+  const deleteEmployee = (employeeId: string) => {
+    if (!canManageHR(currentAccount.roleId)) {
+      showToast('Không có quyền xoá/cho nghỉ việc nhân sự!', undefined, 'warning');
+      return;
+    }
+    const target = employees.find((e) => e.id === employeeId);
+    if (!target) return;
+    if (employeeId === currentAccount.employeeId) {
+      showToast('Không thể xoá hồ sơ của tài khoản đang đăng nhập!', undefined, 'warning');
+      return;
+    }
+    setEmployees((prev) =>
+      prev.map((e) => (e.id === employeeId ? { ...e, status: 'Đã nghỉ' } : e))
+    );
+    setAccounts((prev) =>
+      prev.map((a) => (a.employeeId === employeeId ? { ...a, active: false } : a))
+    );
+    addAuditLog('Chuyển trạng thái Đã nghỉ', 'Nhân sự', `${target.name} (${target.code})`);
+    showToast(
+      `Đã chuyển trạng thái "${target.name}" sang Đã nghỉ`,
+      'Đã tự động vô hiệu hoá tài khoản đăng nhập liên kết.'
+    );
+  };
+
   const importEmployees = (newEmps: Partial<Employee>[]) => {
+    if (!canManageHR(currentAccount.roleId)) {
+      showToast('Không có quyền nhập Excel nhân sự!', undefined, 'warning');
+      return 0;
+    }
+
     let addedCount = 0;
     const createdList: Employee[] = [];
+    const existingCodes = new Set(employees.map((e) => e.code.toUpperCase()));
+    let maxCodeNum = employees.reduce((max, e) => {
+      const num = parseInt(e.code.replace(/\D/g, ''), 10);
+      return Number.isFinite(num) && num > max ? num : max;
+    }, 0);
 
     newEmps.forEach((raw, idx) => {
-      const code = raw.code || `NV${String(employees.length + idx + 1).padStart(4, '0')}`;
-      const name = raw.name || `Nhân viên Mới ${idx + 1}`;
-      const joinDate = raw.joinDate || '10/10/2026';
+      let candidateCode = raw.code ? sanitizeTextInput(raw.code, 20).toUpperCase() : '';
+      if (!candidateCode || existingCodes.has(candidateCode)) {
+        maxCodeNum += 1;
+        candidateCode = `NV${String(maxCodeNum).padStart(4, '0')}`;
+      }
+      existingCodes.add(candidateCode);
+
+      const name = sanitizeTextInput(raw.name || `Nhân viên Mới ${idx + 1}`, 120);
+      const joinDate = raw.joinDate || formatIsoToVN(getTodayIsoDate());
+      const dept = VALID_DEPARTMENTS.includes(raw.department as DepartmentName)
+        ? (raw.department as DepartmentName)
+        : 'Kinh doanh';
+      const status = VALID_STATUSES.includes(raw.status as EmployeeStatus)
+        ? (raw.status as EmployeeStatus)
+        : 'Thử việc';
+      const baseSalary = Math.max(0, Number(raw.baseSalary) || 14000000);
+      const allowance = Math.max(0, Number(raw.allowance) || 1200000);
+
       createdList.push({
-        id: code,
-        code,
+        id: candidateCode,
+        code: candidateCode,
         name,
-        email: raw.email || `${code.toLowerCase()}@phuonghihi.vn`,
-        phone: raw.phone || '0901234567',
+        email: raw.email
+          ? sanitizeTextInput(raw.email, 120)
+          : `${candidateCode.toLowerCase()}@phuonghihi.vn`,
+        phone: raw.phone ? sanitizeTextInput(String(raw.phone), 30) : '0901234567',
         dob: raw.dob || '15/05/1998',
-        department: (raw.department as Employee['department']) || 'Kinh doanh',
+        department: dept,
         position: (raw.position as Employee['position']) || 'Nhân viên',
-        status: (raw.status as Employee['status']) || 'Thử việc',
+        status,
         joinDate,
         allowRemote: Boolean(raw.allowRemote),
         avatarColor: 'bg-blue-100 text-blue-700',
-        baseSalary: Number(raw.baseSalary) || 14000000,
-        allowance: Number(raw.allowance) || 1200000,
-        dependents: 0,
-        contracts: [],
+        baseSalary,
+        allowance,
+        dependents: Math.max(0, Number(raw.dependents) || 0),
+        bankAccount: raw.bankAccount || '',
+        bankName: raw.bankName || 'Vietcombank',
+        contracts: [
+          {
+            id: `HD-${candidateCode}`,
+            contractNumber: `HĐLĐ-PH/${candidateCode}/2026`,
+            contractType:
+              status === 'Thử việc'
+                ? 'Hợp đồng thử việc 2 tháng'
+                : 'Hợp đồng không xác định thời hạn',
+            startDate: joinDate,
+            endDate: status === 'Thử việc' ? '31/12/2026' : 'Không thời hạn',
+            baseSalary,
+            allowance,
+            dependents: 0,
+            status: 'Còn hiệu lực',
+          },
+        ],
         documents: [],
         tasks: DEFAULT_ONBOARDING_TEMPLATE.map((t, tIdx) => ({
-          id: `TASK-${code}-${tIdx}`,
+          id: `TASK-${candidateCode}-${tIdx}`,
           title: t,
           type: 'Nhận người mới',
           dueDate: joinDate,
@@ -738,10 +1565,22 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (createdList.length > 0) {
       setEmployees((prev) => [...createdList, ...prev]);
+      setLeaveBalances((prev) => [
+        ...prev,
+        ...createdList.map((emp) => ({
+          employeeId: emp.id,
+          year: 2026,
+          annualQuota: 12,
+          carriedOver: 0,
+          used: 0,
+          pending: 0,
+          allocated: true,
+        })),
+      ]);
       addAuditLog('Nhập Excel nhân sự', 'Nhân sự', `Đã nhập ${addedCount} nhân viên từ file Excel`);
       showToast(
         `Đã nhập thành công ${addedCount} nhân viên từ Excel!`,
-        'Danh sách công việc nhận người mới đã được tự động khởi tạo.'
+        'Danh sách công việc nhận người mới và hạn mức phép đã được tự động khởi tạo.'
       );
     }
     return addedCount;
@@ -760,7 +1599,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `TASK-${employeeId}-${Date.now()}-${idx}`,
       title,
       type,
-      dueDate: emp.joinDate || '15/10/2026',
+      dueDate: emp.joinDate || formatIsoToVN(getTodayIsoDate()),
       assignee: 'Đặng Thu Trang',
       completed: false,
     }));
@@ -778,6 +1617,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleChecklistTask = (employeeId: string, taskId: string) => {
+    const emp = employees.find((e) => e.id === employeeId);
+    const task = emp?.tasks.find((t) => t.id === taskId);
     setEmployees((prev) =>
       prev.map((e) =>
         e.id === employeeId
@@ -790,30 +1631,181 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : e
       )
     );
+    if (emp && task) {
+      addAuditLog(
+        task.completed ? 'Mở lại đầu việc' : 'Hoàn thành đầu việc',
+        'Nhân sự',
+        `${emp.name} · ${task.title}`
+      );
+    }
   };
 
   const aggregateTimesheet = (period: string) => {
-    setPayrollPeriods((prev) =>
-      prev.map((p) => (p.period === period ? { ...p, step1TimesheetAggregated: true } : p))
-    );
+    const periodState = payrollPeriods.find((p) => p.period === period);
+    if (periodState?.step2TimesheetLocked || periodState?.locked) {
+      showToast(
+        `Kỳ công ${period} đã chốt khoá!`,
+        'Vui lòng mở khoá kỳ công trước khi chạy tổng hợp lại.',
+        'warning'
+      );
+      return;
+    }
+
+    const standardDays = settings.standardWorkDays || 22;
+
+    setTimesheets((prev) => {
+      const updatedRows: MonthlyTimesheetRow[] = [];
+      const existingMap = new Map(
+        prev.filter((r) => r.period === period).map((r) => [r.employeeId, r])
+      );
+
+      employees.forEach((emp, idx) => {
+        if (emp.status === 'Đã nghỉ') return;
+        const currentRow = existingMap.get(emp.id);
+
+        // Calculate live deltas from attendanceRecords and approved requests in this period
+        const periodAtt = attendanceRecords.filter(
+          (r) => r.employeeId === emp.id && r.date.startsWith(period)
+        );
+        const checkedInRecords = periodAtt.filter((r) => Boolean(r.checkIn));
+        const liveLateRecords = checkedInRecords.filter((r) => r.lateMinutes > 0);
+        const liveLateMins = liveLateRecords.reduce((s, r) => s + r.lateMinutes, 0);
+        const liveOtFromAtt = checkedInRecords.reduce((s, r) => s + (r.otHours || 0), 0);
+
+        const approvedLeaves = requests.filter(
+          (r) =>
+            r.employeeId === emp.id &&
+            r.status === 'Đã duyệt' &&
+            r.type === 'Nghỉ phép năm' &&
+            derivePeriodFromDate(r.startDate, period) === period
+        );
+        const approvedLeaveDays = approvedLeaves.reduce(
+          (s, r) => s + (r.days || calculateInclusiveDays(r.startDate, r.endDate)),
+          0
+        );
+
+        const approvedOtReqs = requests.filter(
+          (r) =>
+            r.employeeId === emp.id &&
+            r.status === 'Đã duyệt' &&
+            r.type === 'Đăng ký tăng ca' &&
+            derivePeriodFromDate(r.startDate, period) === period
+        );
+        const approvedOtHours = approvedOtReqs.reduce((s, r) => s + (r.otHours || 0), 0);
+
+        if (currentRow) {
+          updatedRows.push({
+            ...currentRow,
+            standardDays,
+            paidLeaveDays: Math.max(currentRow.paidLeaveDays, approvedLeaveDays),
+            lateCount: Math.max(currentRow.lateCount, liveLateRecords.length),
+            lateMinutes: Math.max(currentRow.lateMinutes, liveLateMins),
+            otHours: Math.max(currentRow.otHours, liveOtFromAtt, approvedOtHours),
+          });
+        } else {
+          updatedRows.push({
+            employeeId: emp.id,
+            period,
+            standardDays,
+            actualDays: 20 + (idx % 3) * 0.5,
+            paidLeaveDays: Math.max(idx % 3 === 0 ? 1 : 0, approvedLeaveDays),
+            absentDays: idx % 7 === 0 ? 1 : 0,
+            lateCount: Math.max(idx % 4, liveLateRecords.length),
+            lateMinutes: Math.max((idx % 4) * 14, liveLateMins),
+            otHours: Math.max(
+              idx % 5 === 0 ? 3 : idx % 3 === 0 ? 2 : 0,
+              liveOtFromAtt,
+              approvedOtHours
+            ),
+            confirmed: false,
+          });
+        }
+      });
+
+      const otherPeriods = prev.filter((r) => r.period !== period);
+      return [...otherPeriods, ...updatedRows];
+    });
+
+    setPayrollPeriods((prev) => {
+      const exists = prev.some((p) => p.period === period);
+      if (exists) {
+        return prev.map((p) => (p.period === period ? { ...p, step1TimesheetAggregated: true } : p));
+      }
+      return [
+        ...prev,
+        {
+          period,
+          step1TimesheetAggregated: true,
+          step2TimesheetLocked: false,
+          step3SalariesDeclared: !employees.some((e) => e.status !== 'Đã nghỉ' && e.baseSalary <= 0),
+          step4PayrollCalculated: false,
+          step5PayslipsPublished: false,
+          locked: false,
+        },
+      ];
+    });
+
     addAuditLog('Tổng hợp công', 'Bảng công', `Kỳ ${period}`);
     showToast(
       `Đã tổng hợp bảng công kỳ ${period}!`,
-      'Tự động đối chiếu ngày công thực tế, phép năm, đi muộn và giờ tăng ca (OT).'
+      'Tự động đối chiếu ngày công thực tế, phép năm đã duyệt, đi muộn và giờ tăng ca (OT).'
     );
   };
 
   const toggleConfirmTimesheet = (employeeId: string, period: string) => {
-    setTimesheets((prev) =>
-      prev.map((row) =>
-        row.employeeId === employeeId && row.period === period
-          ? { ...row, confirmed: !row.confirmed }
-          : row
-      )
+    const periodState = payrollPeriods.find((p) => p.period === period);
+    if (periodState?.step2TimesheetLocked || periodState?.locked) {
+      showToast(
+        `Bảng công kỳ ${period} đã chốt khoá!`,
+        'Không thể thay đổi trạng thái xác nhận khi kỳ công đã khoá.',
+        'warning'
+      );
+      return;
+    }
+
+    const emp = employees.find((e) => e.id === employeeId);
+    const existingRow = timesheets.find((r) => r.employeeId === employeeId && r.period === period);
+    const nextConfirmed = existingRow ? !existingRow.confirmed : true;
+
+    setTimesheets((prev) => {
+      const exists = prev.some((r) => r.employeeId === employeeId && r.period === period);
+      if (exists) {
+        return prev.map((row) =>
+          row.employeeId === employeeId && row.period === period
+            ? { ...row, confirmed: !row.confirmed }
+            : row
+        );
+      }
+      const idx = employees.findIndex((e) => e.id === employeeId);
+      return [
+        ...prev,
+        {
+          employeeId,
+          period,
+          standardDays: settings.standardWorkDays || 22,
+          actualDays: 20 + ((idx >= 0 ? idx : 0) % 3) * 0.5,
+          paidLeaveDays: (idx >= 0 ? idx : 0) % 3 === 0 ? 1 : 0,
+          absentDays: 0,
+          lateCount: 0,
+          lateMinutes: 0,
+          otHours: 0,
+          confirmed: true,
+        },
+      ];
+    });
+
+    addAuditLog(
+      nextConfirmed ? 'Xác nhận bảng công' : 'Huỷ xác nhận công',
+      'Bảng công',
+      `${emp?.name || employeeId} · Kỳ ${period}`
     );
   };
 
   const lockTimesheetPeriod = (period: string) => {
+    if (!canManageHR(currentAccount.roleId) && !canManagePayroll(currentAccount.roleId)) {
+      showToast('Không có quyền chốt kỳ công!', undefined, 'warning');
+      return;
+    }
     setTimesheets((prev) =>
       prev.map((row) => (row.period === period ? { ...row, confirmed: true } : row))
     );
@@ -828,154 +1820,271 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Đã chốt kỳ công ${period}!`, 'Số liệu công đã được khoá để phục vụ tính lương.');
   };
 
-  const declareBaseSalary = (employeeId: string, baseSalary: number, allowance = 3000000) => {
-    setEmployees((prev) => {
-      const updated = prev.map((e) =>
-        e.id === employeeId ? { ...e, baseSalary, allowance } : e
+  const unlockTimesheetPeriod = (period: string) => {
+    if (!canManageHR(currentAccount.roleId) && currentAccount.roleId !== 'super_admin') {
+      showToast('Chỉ Quản trị viên hoặc Nhân sự mới được mở khoá kỳ công!', undefined, 'warning');
+      return;
+    }
+    const periodState = payrollPeriods.find((p) => p.period === period);
+    if (periodState?.locked) {
+      showToast(
+        'Bảng lương kỳ này đang khoá!',
+        'Vui lòng mở khoá bảng lương trước khi mở khoá kỳ công.',
+        'warning'
       );
-      const anyMissing = updated.some((e) => e.status !== 'Đã nghỉ' && e.baseSalary <= 0);
-      if (!anyMissing) {
-        setPayrollPeriods((pp) =>
-          pp.map((p) => ({ ...p, step3SalariesDeclared: true }))
-        );
-      }
-      return updated;
+      return;
+    }
+    setPayrollPeriods((prev) =>
+      prev.map((p) => (p.period === period ? { ...p, step2TimesheetLocked: false } : p))
+    );
+    addAuditLog('Mở khoá kỳ công', 'Bảng công', `Kỳ ${period}`);
+    showToast(`Đã mở khoá kỳ công ${period}`, 'Bạn có thể điều chỉnh xác nhận và tổng hợp lại công.');
+  };
+
+  const declareBaseSalary = (employeeId: string, baseSalary: number, allowance?: number) => {
+    if (!canManagePayroll(currentAccount.roleId) && !canManageHR(currentAccount.roleId)) {
+      showToast('Không có quyền khai lương cơ bản!', undefined, 'warning');
+      return;
+    }
+    const cleanSalary = Math.max(0, Number(baseSalary) || 0);
+    if (cleanSalary <= 0) {
+      showToast('Mức lương cơ bản phải lớn hơn 0đ!', undefined, 'warning');
+      return;
+    }
+
+    const updatedList = employees.map((e) => {
+      if (e.id !== employeeId) return e;
+      const nextAllowance = allowance !== undefined ? Math.max(0, allowance) : e.allowance;
+      return {
+        ...e,
+        baseSalary: cleanSalary,
+        allowance: nextAllowance,
+        contracts: e.contracts.map((c, idx) =>
+          idx === 0 ? { ...c, baseSalary: cleanSalary, allowance: nextAllowance } : c
+        ),
+      };
     });
+
+    setEmployees(updatedList);
+
+    const anyMissing = updatedList.some((e) => e.status !== 'Đã nghỉ' && e.baseSalary <= 0);
+    if (!anyMissing) {
+      setPayrollPeriods((pp) => pp.map((p) => ({ ...p, step3SalariesDeclared: true })));
+    }
+
     const emp = employees.find((e) => e.id === employeeId);
-    addAuditLog('Khai lương cơ bản', 'Bảng lương', `${emp?.name || employeeId}`);
+    addAuditLog(
+      'Khai lương cơ bản',
+      'Bảng lương',
+      `${emp?.name || employeeId}: ${cleanSalary.toLocaleString('vi-VN')}đ`
+    );
     showToast(
       `Đã khai lương cơ bản cho ${emp?.name || employeeId}!`,
-      'Tất cả nhân viên trong kỳ đã có đủ mức lương cơ bản.'
+      anyMissing
+        ? 'Đã cập nhật mức lương cơ bản vào hồ sơ & hợp đồng.'
+        : 'Tất cả nhân viên trong kỳ đã có đủ mức lương cơ bản.'
     );
   };
 
-  const computePayrollRows = (period: string): PayrollRow[] => {
-    const activeEmps = employees.filter((e) => e.status !== 'Đã nghỉ');
-    const periodState = payrollPeriods.find((p) => p.period === period);
+  const computePayrollRows = useCallback(
+    (period: string): PayrollRow[] => {
+      const activeEmps = scopedEmployees.filter((e) => e.status !== 'Đã nghỉ');
+      const periodState = payrollPeriods.find((p) => p.period === period);
+      const normalizedPeriod = normalizePeriodKey(period);
 
-    return activeEmps.map((emp) => {
-      const ts = timesheets.find((t) => t.employeeId === emp.id && t.period === period) || {
-        standardDays: settings.standardWorkDays || 22,
-        actualDays: 21,
-        paidLeaveDays: 1,
-        absentDays: 0,
-        lateCount: 0,
-        lateMinutes: 0,
-        otHours: 0,
-      };
+      return activeEmps.map((emp) => {
+        const idx = employees.findIndex((x) => x.id === emp.id);
+        const ts = timesheets.find((t) => t.employeeId === emp.id && t.period === period) || {
+          employeeId: emp.id,
+          period,
+          standardDays: settings.standardWorkDays || 22,
+          actualDays: 20 + ((idx >= 0 ? idx : 0) % 3) * 0.5,
+          paidLeaveDays: (idx >= 0 ? idx : 0) % 3 === 0 ? 1 : 0,
+          absentDays: 0,
+          lateCount: 0,
+          lateMinutes: 0,
+          otHours: 0,
+          confirmed: false,
+        };
 
-      const baseSalary = emp.baseSalary || 25000000;
-      const allowance = emp.allowance || 1500000;
-      const dailySalary = baseSalary / ts.standardDays;
-      const hourlySalary = dailySalary / 8;
+        const hasDeclaredSalary = emp.baseSalary > 0;
+        const baseSalary = hasDeclaredSalary ? emp.baseSalary : 0;
+        const allowance = hasDeclaredSalary ? Math.max(0, emp.allowance || 0) : 0;
+        const standardDays = Math.max(1, ts.standardDays || settings.standardWorkDays || 22);
+        const dailySalary = baseSalary / standardDays;
+        const hourlySalary = dailySalary / 8;
 
-      // Evaluate tiered late penalties
-      let latePenaltyAmount = 0;
-      let lateDeductedDays = 0;
-      const effectiveLateCount = Math.max(0, ts.lateCount - settings.graceLateCountPerMonth);
+        // Evaluate tiered late penalties
+        let latePenaltyAmount = 0;
+        let lateDeductedDays = 0;
+        const effectiveLateCount = Math.max(0, ts.lateCount - settings.graceLateCountPerMonth);
 
-      if (settings.autoProcessLate && effectiveLateCount > 0 && ts.lateMinutes > 0) {
-        const avgMins = Math.max(1, Math.round(ts.lateMinutes / Math.max(1, ts.lateCount)));
-        const matchedTier =
-          settings.lateTiers.find(
-            (tier) =>
-              avgMins >= tier.fromMinutes &&
-              (tier.toMinutes === null || avgMins <= tier.toMinutes)
-          ) || settings.lateTiers[settings.lateTiers.length - 1];
+        if (
+          hasDeclaredSalary &&
+          settings.autoProcessLate &&
+          effectiveLateCount > 0 &&
+          ts.lateMinutes > 0
+        ) {
+          const avgMins = Math.max(1, Math.round(ts.lateMinutes / Math.max(1, ts.lateCount)));
+          const matchedTier =
+            settings.lateTiers.find(
+              (tier) =>
+                avgMins >= tier.fromMinutes &&
+                (tier.toMinutes === null || avgMins <= tier.toMinutes)
+            ) || settings.lateTiers[settings.lateTiers.length - 1];
 
-        if (matchedTier) {
-          if (matchedTier.action === 'Trừ tiền') {
-            latePenaltyAmount = matchedTier.value * effectiveLateCount;
-          } else if (matchedTier.action === 'Trừ công') {
-            lateDeductedDays = matchedTier.value * effectiveLateCount;
-            latePenaltyAmount = Math.round(dailySalary * lateDeductedDays);
+          if (matchedTier) {
+            if (matchedTier.action === 'Trừ tiền') {
+              latePenaltyAmount = matchedTier.value * effectiveLateCount;
+            } else if (matchedTier.action === 'Trừ công') {
+              lateDeductedDays = matchedTier.value * effectiveLateCount;
+              latePenaltyAmount = Math.round(dailySalary * lateDeductedDays);
+            }
           }
         }
-      }
 
-      const payableDays = Math.max(0, ts.actualDays + ts.paidLeaveDays);
-      const proRatedSalary = Math.round(dailySalary * payableDays);
-      const otAmount = Math.round(ts.otHours * hourlySalary * settings.otMultiplierWeekday);
+        const payableDays = Math.min(standardDays, Math.max(0, ts.actualDays + ts.paidLeaveDays));
+        const proRatedSalary = hasDeclaredSalary ? Math.round(dailySalary * payableDays) : 0;
+        const otAmount = hasDeclaredSalary
+          ? Math.round(ts.otHours * hourlySalary * settings.otMultiplierWeekday)
+          : 0;
 
-      const empBonuses = bonusDeductions
-        .filter((b) => b.employeeId === emp.id && b.period === period && b.type === 'Thưởng')
-        .reduce((sum, b) => sum + b.amount, 0);
+        const empBonuses = bonusDeductions
+          .filter(
+            (b) =>
+              b.employeeId === emp.id &&
+              normalizePeriodKey(b.period) === normalizedPeriod &&
+              b.type === 'Thưởng'
+          )
+          .reduce((sum, b) => sum + b.amount, 0);
 
-      const empDeductions = bonusDeductions
-        .filter((b) => b.employeeId === emp.id && b.period === period && b.type === 'Khấu trừ')
-        .reduce((sum, b) => sum + b.amount, 0);
+        const empDeductions = bonusDeductions
+          .filter(
+            (b) =>
+              b.employeeId === emp.id &&
+              normalizePeriodKey(b.period) === normalizedPeriod &&
+              b.type === 'Khấu trừ'
+          )
+          .reduce((sum, b) => sum + b.amount, 0);
 
-      const grossIncome = proRatedSalary + allowance + otAmount + empBonuses;
-      const insuranceAmount = Math.round((baseSalary * settings.insuranceRateEmployee) / 100);
+        const grossIncome = proRatedSalary + allowance + otAmount + empBonuses;
+        const maxInsSalary = settings.maxInsuranceSalary || 46800000;
+        const insurableSalary = Math.min(baseSalary, maxInsSalary);
+        const insuranceAmount = hasDeclaredSalary
+          ? Math.round((insurableSalary * settings.insuranceRateEmployee) / 100)
+          : 0;
 
-      // Personal Income Tax (Thuế TNCN)
-      const familyDeduction =
-        settings.personalTaxDeduction + emp.dependents * settings.dependentTaxDeduction;
-      const taxableIncome = Math.max(0, grossIncome - insuranceAmount - familyDeduction);
-      const taxAmount =
-        taxableIncome <= 0
-          ? 0
-          : taxableIncome <= 5000000
-          ? Math.round(taxableIncome * 0.05)
-          : Math.round(250000 + (taxableIncome - 5000000) * 0.1);
+        // Personal Income Tax (Thuế TNCN lũy tiến 7 bậc)
+        const familyDeduction =
+          settings.personalTaxDeduction + (emp.dependents || 0) * settings.dependentTaxDeduction;
+        const taxableIncome = Math.max(0, grossIncome - insuranceAmount - familyDeduction);
+        const taxAmount = hasDeclaredSalary ? calculateProgressivePIT(taxableIncome) : 0;
 
-      const netSalary = Math.max(
-        0,
-        grossIncome - insuranceAmount - taxAmount - latePenaltyAmount - empDeductions
-      );
+        const netSalary = hasDeclaredSalary
+          ? Math.max(
+              0,
+              grossIncome - insuranceAmount - taxAmount - latePenaltyAmount - empDeductions
+            )
+          : 0;
 
-      return {
-        employeeId: emp.id,
-        period,
-        baseSalary: emp.baseSalary,
-        allowance,
-        standardDays: ts.standardDays,
-        actualDays: ts.actualDays,
-        paidLeaveDays: ts.paidLeaveDays,
-        otHours: ts.otHours,
-        otAmount,
-        proRatedSalary,
-        bonus: empBonuses,
-        lateCount: ts.lateCount,
-        lateMinutes: ts.lateMinutes,
-        latePenaltyAmount,
-        lateDeductedDays,
-        otherDeduction: empDeductions,
-        insuranceAmount,
-        taxAmount,
-        netSalary,
-        payslipPublished: Boolean(periodState?.step5PayslipsPublished),
-        emailSent: Boolean(periodState?.step5PayslipsPublished && settings.autoSendPayslipEmail),
-      };
-    });
-  };
+        return {
+          employeeId: emp.id,
+          period,
+          baseSalary: emp.baseSalary,
+          allowance,
+          standardDays,
+          actualDays: ts.actualDays,
+          paidLeaveDays: ts.paidLeaveDays,
+          otHours: ts.otHours,
+          otAmount,
+          proRatedSalary,
+          bonus: empBonuses,
+          lateCount: ts.lateCount,
+          lateMinutes: ts.lateMinutes,
+          latePenaltyAmount,
+          lateDeductedDays,
+          otherDeduction: empDeductions,
+          insuranceAmount,
+          taxAmount,
+          netSalary,
+          payslipPublished: Boolean(periodState?.step5PayslipsPublished),
+          emailSent: Boolean(periodState?.step5PayslipsPublished && settings.autoSendPayslipEmail),
+        };
+      });
+    },
+    [scopedEmployees, employees, payrollPeriods, timesheets, settings, bonusDeductions]
+  );
 
   const calculatePayrollForPeriod = (period: string) => {
+    if (!canManagePayroll(currentAccount.roleId)) {
+      showToast('Không có quyền chạy tính lương!', undefined, 'warning');
+      return;
+    }
+    const periodState = payrollPeriods.find((p) => p.period === period);
+    if (periodState?.locked) {
+      showToast('Bảng lương kỳ này đã khoá!', 'Vui lòng mở khoá bảng lương trước khi tính lại.', 'warning');
+      return;
+    }
+    const missingSalaryEmps = employees.filter((e) => e.status !== 'Đã nghỉ' && e.baseSalary <= 0);
+    if (missingSalaryEmps.length > 0) {
+      showToast(
+        `Còn ${missingSalaryEmps.length} nhân sự chưa khai lương cơ bản!`,
+        `Vui lòng khai lương cho "${missingSalaryEmps[0].name}" ở Bước 3 trước khi tính lương.`,
+        'warning'
+      );
+      return;
+    }
+
     setPayrollPeriods((prev) =>
-      prev.map((p) => (p.period === period ? { ...p, step4PayrollCalculated: true } : p))
+      prev.map((p) =>
+        p.period === period
+          ? { ...p, step3SalariesDeclared: true, step4PayrollCalculated: true }
+          : p
+      )
     );
     addAuditLog('Tính lương', 'Bảng lương', `${period}`);
     showToast(
       `Đã tính xong bảng lương kỳ ${period}!`,
-      'Đã tự động tính BHXH (10.5%), Thuế TNCN, Tăng ca và Khấu trừ đi muộn theo bậc.'
+      'Đã tự động tính BHXH (10.5%), Thuế TNCN 7 bậc, Tăng ca và Khấu trừ đi muộn.'
     );
   };
 
   const publishPayslipsForPeriod = (period: string) => {
+    if (!canManagePayroll(currentAccount.roleId)) {
+      showToast('Không có quyền phát hành phiếu lương!', undefined, 'warning');
+      return;
+    }
+    const periodState = payrollPeriods.find((p) => p.period === period);
+    if (periodState?.locked) {
+      showToast('Bảng lương kỳ này đã khoá!', 'Vui lòng mở khoá bảng lương trước khi phát hành lại.', 'warning');
+      return;
+    }
+    const missingSalaryEmps = employees.filter((e) => e.status !== 'Đã nghỉ' && e.baseSalary <= 0);
+    if (missingSalaryEmps.length > 0) {
+      showToast(
+        `Còn ${missingSalaryEmps.length} nhân sự chưa khai lương cơ bản!`,
+        `Vui lòng hoàn tất khai lương cho "${missingSalaryEmps[0].name}" ở Bước 3 trước khi chốt phát hành phiếu lương.`,
+        'warning'
+      );
+      return;
+    }
+
+    const activeCount = employees.filter((e) => e.status !== 'Đã nghỉ').length;
     setPayrollPeriods((prev) =>
       prev.map((p) =>
         p.period === period
           ? {
               ...p,
+              step3SalariesDeclared: true,
               step4PayrollCalculated: true,
               step5PayslipsPublished: true,
             }
           : p
       )
     );
-    addAuditLog('Phát hành phiếu lương', 'Bảng lương', `Kỳ ${period} (49 phiếu)`);
+    addAuditLog('Phát hành phiếu lương', 'Bảng lương', `Kỳ ${period} (${activeCount} phiếu)`);
     showToast(
-      `Đã chốt & phát hành 49 phiếu lương kỳ ${period}!`,
+      `Đã chốt & phát hành ${activeCount} phiếu lương kỳ ${period}!`,
       settings.autoSendPayslipEmail
         ? 'Đã tạo PDF phiếu lương và gửi email tự động tới từng nhân viên.'
         : 'Phiếu lương đã được xuất bản lên cổng thông tin của từng nhân viên.'
@@ -983,6 +2092,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleLockPayrollPeriod = (period: string) => {
+    if (!canManagePayroll(currentAccount.roleId)) {
+      showToast('Không có quyền khoá/mở khoá bảng lương!', undefined, 'warning');
+      return;
+    }
     const target = payrollPeriods.find((p) => p.period === period);
     const nextLocked = !target?.locked;
     setPayrollPeriods((prev) =>
@@ -1002,9 +2115,24 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addBonusDeduction = (item: Omit<BonusDeductionItem, 'id'>) => {
+    if (!canManagePayroll(currentAccount.roleId)) {
+      showToast('Không có quyền thêm thưởng/khấu trừ!', undefined, 'warning');
+      return;
+    }
+    const normalizedPeriod = normalizePeriodKey(item.period);
+    const periodState = payrollPeriods.find((p) => p.period === normalizedPeriod);
+    if (periodState?.locked) {
+      showToast(
+        `Bảng lương kỳ ${normalizedPeriod} đang khoá!`,
+        'Vui lòng mở khoá bảng lương trước khi thêm khoản thưởng/khấu trừ.',
+        'warning'
+      );
+      return;
+    }
     const cleanTitle = sanitizeTextInput(item.title, 200);
     const newItem: BonusDeductionItem = {
       ...item,
+      period: normalizedPeriod,
       title: cleanTitle,
       id: `BD-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
     };
@@ -1027,7 +2155,23 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       installmentCount: number;
     }[]
   ): number => {
+    if (!canManagePayroll(currentAccount.roleId)) {
+      showToast('Không có quyền áp dụng hoa hồng doanh số!', undefined, 'warning');
+      return 0;
+    }
+    const normalizedPeriod = normalizePeriodKey(period);
+    const periodState = payrollPeriods.find((p) => p.period === normalizedPeriod);
+    if (periodState?.locked) {
+      showToast(
+        `Bảng lương kỳ ${normalizedPeriod} đang khoá!`,
+        'Vui lòng mở khoá bảng lương trước khi áp dụng hoa hồng.',
+        'warning'
+      );
+      return 0;
+    }
+
     const newRecords: BonusDeductionItem[] = [];
+    const updatedEmpIds = new Set<string>();
     let totalCommission = 0;
 
     items.forEach((entry, idx) => {
@@ -1037,39 +2181,55 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const sum = iphoneAmt + appleCareAmt + installmentAmt;
       if (sum <= 0) return;
 
+      updatedEmpIds.add(entry.employeeId);
       totalCommission += sum;
       newRecords.push({
-        id: `BD-COMM-${Date.now()}-${idx}`,
+        id: `BD-COMM-${normalizedPeriod}-${entry.employeeId}-${idx}`,
         employeeId: entry.employeeId,
-        period,
+        period: normalizedPeriod,
         type: 'Thưởng',
         title: `Hoa hồng bán lẻ: ${entry.iphoneCount} máy iPhone + ${entry.appleCareCount} gói AppleCare+ + ${entry.installmentCount} HS trả góp`,
         amount: sum,
-        date: '09/10/2026',
+        date: formatIsoToVN(getTodayIsoDate()),
       });
     });
 
     if (newRecords.length > 0) {
-      setBonusDeductions((prev) => [...newRecords, ...prev]);
+      setBonusDeductions((prev) => {
+        // Remove previous retail commission batch for the same employee + period to avoid duplicate stacking
+        const withoutOldComm = prev.filter(
+          (b) =>
+            !(
+              normalizePeriodKey(b.period) === normalizedPeriod &&
+              updatedEmpIds.has(b.employeeId) &&
+              (b.id.startsWith('BD-COMM-') || b.title.startsWith('Hoa hồng bán lẻ:'))
+            )
+        );
+        return [...newRecords, ...withoutOldComm];
+      });
       addAuditLog(
         'Tính hoa hồng bán iPhone',
         'Bảng lương',
-        `Kỳ ${period} · ${newRecords.length} nhân sự kinh doanh/kỹ thuật · Tổng ${totalCommission.toLocaleString('vi-VN')}đ`
+        `Kỳ ${normalizedPeriod} · ${newRecords.length} nhân sự kinh doanh/kỹ thuật · Tổng ${totalCommission.toLocaleString('vi-VN')}đ`
       );
       showToast(
         `Đã áp dụng hoa hồng bán iPhone cho ${newRecords.length} nhân viên!`,
-        `Tổng thưởng hoa hồng: ${totalCommission.toLocaleString('vi-VN')} ₫ đã cộng tự động vào Bước 4.`
+        `Tổng thưởng hoa hồng: ${totalCommission.toLocaleString('vi-VN')} ₫ đã cập nhật vào Bước 4.`
       );
     }
     return newRecords.length;
   };
 
   const updateSettings = (newSettings: SystemSettings) => {
+    if (!canManageSettings(currentAccount.roleId)) {
+      showToast('Không có quyền thay đổi cài đặt hệ thống!', undefined, 'warning');
+      return;
+    }
     setSettings(newSettings);
     addAuditLog('Đổi cấu hình', 'Cài đặt', 'attendance & payroll');
     showToast(
       'Đã lưu thay đổi cài đặt hệ thống!',
-      'Quy tắc chấm công, địa điểm GPS và bậc phạt đi muộn đã được cập nhật.'
+      'Quy tắc chấm công, địa điểm GPS, bậc phạt đi muộn và tham số lương đã được cập nhật.'
     );
   };
 
@@ -1090,7 +2250,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         title: cleanTitle,
         content: cleanContent,
         id: `NEWS-${Date.now()}`,
-        createdAt: '09/10/2026',
+        createdAt: formatIsoToVN(getTodayIsoDate()),
       };
       setAnnouncements((prev) => [newAnn, ...prev]);
       addAuditLog('Đăng thông báo', 'Bản tin nội bộ', cleanTitle);
@@ -1108,33 +2268,121 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const togglePinAnnouncement = (id: string) => {
+    const target = announcements.find((a) => a.id === id);
     setAnnouncements((prev) =>
       prev.map((a) => (a.id === id ? { ...a, pinned: !a.pinned } : a))
     );
+    if (target) {
+      addAuditLog(
+        target.pinned ? 'Bỏ ghim thông báo' : 'Ghim thông báo',
+        'Bản tin nội bộ',
+        target.title
+      );
+    }
   };
 
   const addAccount = (acc: Omit<UserAccount, 'id'>) => {
+    if (!canManageSettings(currentAccount.roleId)) {
+      showToast('Chỉ Quản trị cao nhất mới được cấp tài khoản!', undefined, 'warning');
+      return;
+    }
     const cleanName = sanitizeTextInput(acc.name, 100);
     const cleanUsername = sanitizeTextInput(acc.username, 60);
     const newAcc: UserAccount = {
       ...acc,
       name: cleanName,
-      username: cleanUsername,
+      username: cleanUsername.startsWith('@') ? cleanUsername : `@${cleanUsername}`,
       id: `ACC-${Date.now()}`,
     };
     setAccounts((prev) => [...prev, newAcc]);
-    addAuditLog('Cấp tài khoản', 'Phân quyền', `${cleanName} (${cleanUsername})`);
+    addAuditLog('Cấp tài khoản', 'Phân quyền', `${cleanName} (${newAcc.username})`);
     showToast(`Đã cấp tài khoản cho ${cleanName}`, `Vai trò: ${acc.dataScope}`);
   };
 
+  const updateAccount = (acc: UserAccount) => {
+    if (!canManageSettings(currentAccount.roleId)) {
+      showToast('Chỉ Quản trị cao nhất mới được sửa quyền tài khoản!', undefined, 'warning');
+      return;
+    }
+    const cleanName = sanitizeTextInput(acc.name, 100);
+    const cleanUsername = sanitizeTextInput(acc.username, 60);
+    const updated: UserAccount = {
+      ...acc,
+      name: cleanName,
+      username: cleanUsername.startsWith('@') ? cleanUsername : `@${cleanUsername}`,
+    };
+    setAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+    addAuditLog('Cập nhật tài khoản', 'Phân quyền', `${cleanName} (${updated.dataScope})`);
+    showToast(`Đã cập nhật tài khoản ${cleanName}`, `Phạm vi: ${updated.dataScope}`);
+  };
+
+  const deleteAccount = (id: string) => {
+    if (!canManageSettings(currentAccount.roleId)) {
+      showToast('Chỉ Quản trị cao nhất mới được xoá tài khoản!', undefined, 'warning');
+      return;
+    }
+    if (id === currentAccount.id) {
+      showToast('Không thể xoá tài khoản đang đăng nhập!', undefined, 'warning');
+      return;
+    }
+    const target = accounts.find((a) => a.id === id);
+    if (!target) return;
+    if (target.roleId === 'super_admin') {
+      const activeAdmins = accounts.filter((a) => a.roleId === 'super_admin' && a.active);
+      if (activeAdmins.length <= 1) {
+        showToast('Không thể xoá tài khoản Quản trị cao nhất duy nhất!', undefined, 'warning');
+        return;
+      }
+    }
+    setAccounts((prev) => prev.filter((a) => a.id !== id));
+    addAuditLog('Xoá tài khoản', 'Phân quyền', `${target.name} (${target.username})`);
+    showToast(`Đã xoá tài khoản ${target.name}`, undefined, 'info');
+  };
+
   const toggleAccountStatus = (id: string) => {
+    if (!canManageSettings(currentAccount.roleId)) {
+      showToast('Chỉ Quản trị cao nhất mới được khoá/mở khoá tài khoản!', undefined, 'warning');
+      return;
+    }
+    if (id === currentAccount.id) {
+      showToast(
+        'Không thể tự khoá tài khoản đang đăng nhập!',
+        'Vui lòng dùng tài khoản quản trị khác nếu cần vô hiệu hoá tài khoản này.',
+        'warning'
+      );
+      return;
+    }
+    const target = accounts.find((a) => a.id === id);
+    if (!target) return;
+    const nextActive = !target.active;
     setAccounts((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, active: !a.active } : a))
+      prev.map((a) => (a.id === id ? { ...a, active: nextActive } : a))
+    );
+    addAuditLog(
+      nextActive ? 'Mở khoá tài khoản' : 'Khoá tài khoản',
+      'Phân quyền',
+      `${target.name} (${target.username})`
+    );
+    showToast(
+      nextActive ? `Đã kích hoạt lại tài khoản ${target.name}` : `Đã khoá tài khoản ${target.name}`,
+      target.username,
+      nextActive ? 'success' : 'info'
     );
   };
 
   const resetDemoData = () => {
-    localStorage.clear();
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(STORAGE_KEY)) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch {
+      // ignore storage errors
+    }
     setEmployees(INITIAL_EMPLOYEES);
     setShiftAssignments(INITIAL_SHIFT_ASSIGNMENTS);
     setAttendanceRecords(INITIAL_ATTENDANCE_RECORDS);
@@ -1161,6 +2409,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         shiftTemplates,
         shiftAssignments,
         attendanceRecords,
+        selectedAttendanceDate,
+        setSelectedAttendanceDate,
         requests,
         leaveBalances,
         timesheets,
@@ -1174,6 +2424,9 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toasts,
         showToast,
         dismissToast,
+        isSyncingBackend,
+        lastSyncedAt,
+        syncNowWithBackend,
         isMobileMenuOpen,
         setIsMobileMenuOpen,
         isCommandPaletteOpen,
@@ -1194,12 +2447,14 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createRequest,
         allocateAnnualLeave,
         saveEmployee,
+        deleteEmployee,
         importEmployees,
         generateChecklistTasks,
         toggleChecklistTask,
         aggregateTimesheet,
         toggleConfirmTimesheet,
         lockTimesheetPeriod,
+        unlockTimesheetPeriod,
         declareBaseSalary,
         calculatePayrollForPeriod,
         publishPayslipsForPeriod,
@@ -1212,6 +2467,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteAnnouncement,
         togglePinAnnouncement,
         addAccount,
+        updateAccount,
+        deleteAccount,
         toggleAccountStatus,
         addAuditLog,
         resetDemoData,

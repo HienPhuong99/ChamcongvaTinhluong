@@ -1,5 +1,16 @@
 import React, { useState } from 'react';
-import { Search, Bell, Smartphone, QrCode, Shield, RotateCcw, Globe, Menu } from 'lucide-react';
+import {
+  Search,
+  Bell,
+  Smartphone,
+  QrCode,
+  Shield,
+  RotateCcw,
+  Globe,
+  Menu,
+  AlertTriangle,
+  X,
+} from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { getInitials } from '../utils/helpers';
 import { GoogleSitesModal } from './GoogleSitesModal';
@@ -13,6 +24,7 @@ export const Topbar: React.FC = () => {
     setIsCommandPaletteOpen,
     setIsDoorQrModalOpen,
     requests,
+    scopedEmployees,
     accounts,
     currentAccount,
     switchAccount,
@@ -21,8 +33,12 @@ export const Topbar: React.FC = () => {
 
   const [isGoogleSitesOpen, setIsGoogleSitesOpen] = useState(false);
   const [isExpoGoOpen, setIsExpoGoOpen] = useState(false);
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
 
-  const pendingCount = requests.filter((r) => r.status === 'Đang chờ').length;
+  const scopedIds = new Set(scopedEmployees.map((e) => e.id));
+  const pendingCount = requests.filter(
+    (r) => r.status === 'Đang chờ' && scopedIds.has(r.employeeId)
+  ).length;
 
   return (
     <>
@@ -123,9 +139,10 @@ export const Topbar: React.FC = () => {
               className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer max-w-[180px] 2xl:max-w-[240px] truncate"
             >
               {accounts.map((acc) => (
-                <option key={acc.id} value={acc.id}>
+                <option key={acc.id} value={acc.id} disabled={!acc.active}>
                   {acc.name} ({acc.dataScope}
                   {acc.department ? ` - ${acc.department}` : ''})
+                  {!acc.active ? ' [Đã khoá]' : ''}
                 </option>
               ))}
             </select>
@@ -145,9 +162,9 @@ export const Topbar: React.FC = () => {
             )}
           </button>
 
-          {/* Reset demo data button */}
+          {/* Reset demo data button (opens confirmation modal) */}
           <button
-            onClick={resetDemoData}
+            onClick={() => setIsResetConfirmOpen(true)}
             title="Khôi phục dữ liệu mẫu mặc định"
             className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
           >
@@ -165,6 +182,63 @@ export const Topbar: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* Confirmation Modal for Reset Demo Data */}
+      {isResetConfirmOpen && (
+        <div
+          onClick={() => setIsResetConfirmOpen(false)}
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-5 animate-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Xác nhận khôi phục dữ liệu mẫu?
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Thao tác này chỉ đặt lại dữ liệu HRM phuonghihi về trạng thái ban đầu.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsResetConfirmOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-600 leading-relaxed">
+              Các thay đổi phân ca, chấm công, đơn từ, bảng lương và cài đặt bạn vừa thử nghiệm sẽ được đặt lại về bộ dữ liệu mẫu 51 nhân sự mặc định.
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setIsResetConfirmOpen(false)}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
+              >
+                Huỷ bỏ
+              </button>
+              <button
+                onClick={() => {
+                  resetDemoData();
+                  setIsResetConfirmOpen(false);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 transition shadow-xs"
+              >
+                Khôi phục mặc định
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <GoogleSitesModal
         open={isGoogleSitesOpen}

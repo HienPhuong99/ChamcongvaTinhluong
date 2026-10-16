@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X, User, FileText, Wallet, Settings } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
-import { matchesSearch } from '../utils/helpers';
+import { canAccessTab, matchesSearch } from '../utils/helpers';
 
 interface SearchResultItem {
   id: string;
@@ -18,6 +18,7 @@ export const CommandPaletteModal: React.FC = () => {
     scopedEmployees,
     requests,
     payrollPeriods,
+    currentAccount,
     setActiveTab,
     setSelectedEmployeeId,
   } = useHRM();
@@ -52,7 +53,9 @@ export const CommandPaletteModal: React.FC = () => {
           title: emp.name,
           subtitle: `${emp.code} · ${emp.department} · ${emp.status}`,
           onSelect: () => {
-            setActiveTab('employees');
+            if (canAccessTab(currentAccount.roleId, 'employees')) {
+              setActiveTab('employees');
+            }
             setSelectedEmployeeId(emp.id);
             setIsCommandPaletteOpen(false);
           },
@@ -83,25 +86,28 @@ export const CommandPaletteModal: React.FC = () => {
     });
 
     // 3. Bảng lương
-    payrollPeriods.forEach((pp) => {
-      const matchEmp = scopedEmployees.find((e) => matchesSearch(e.name, query));
-      if (
-        matchesSearch(`Bảng lương kỳ ${pp.period}`, query) ||
-        matchesSearch('bang luong', query) ||
-        Boolean(matchEmp)
-      ) {
-        items.push({
-          id: `PAY-${pp.period}`,
-          category: 'BẢNG LƯƠNG',
-          title: `Bảng lương kỳ ${pp.period}`,
-          subtitle: `1 phiếu trong phạm vi của bạn`,
-          onSelect: () => {
-            setActiveTab('payroll');
-            setIsCommandPaletteOpen(false);
-          },
-        });
-      }
-    });
+    const activeScopedCount = scopedEmployees.filter((e) => e.status !== 'Đã nghỉ').length;
+    if (canAccessTab(currentAccount.roleId, 'payroll')) {
+      payrollPeriods.forEach((pp) => {
+        const matchEmp = scopedEmployees.find((e) => matchesSearch(e.name, query));
+        if (
+          matchesSearch(`Bảng lương kỳ ${pp.period}`, query) ||
+          matchesSearch('bang luong', query) ||
+          Boolean(matchEmp)
+        ) {
+          items.push({
+            id: `PAY-${pp.period}`,
+            category: 'BẢNG LƯƠNG',
+            title: `Bảng lương kỳ ${pp.period}`,
+            subtitle: `${activeScopedCount} phiếu trong phạm vi của bạn`,
+            onSelect: () => {
+              setActiveTab('payroll');
+              setIsCommandPaletteOpen(false);
+            },
+          });
+        }
+      });
+    }
 
     // 4. Chức năng / Cài đặt
     const quickPages: { label: string; sub: string; tab: Parameters<typeof setActiveTab>[0] }[] = [
@@ -110,25 +116,28 @@ export const CommandPaletteModal: React.FC = () => {
       { label: 'Cài đặt đi muộn & GPS', sub: 'Bậc phạt đi muộn, bán kính văn phòng', tab: 'settings' },
       { label: 'App Chấm Công Điện Thoại', sub: 'Chấm công GPS Leaflet & QR', tab: 'mobile_app' },
       { label: 'Báo cáo & Xuất Excel / PDF', sub: 'Biểu đồ chuyên cần & chi phí lương', tab: 'reports' },
+      { label: 'Hồ sơ của tôi', sub: 'Mã QR cá nhân, phép năm & phiếu lương', tab: 'my_profile' },
     ];
 
-    quickPages.forEach((page, idx) => {
-      if (matchesSearch(page.label, query) || matchesSearch(page.sub, query)) {
-        items.push({
-          id: `PAGE-${idx}`,
-          category: 'CÀI ĐẶT & CHỨC NĂNG',
-          title: page.label,
-          subtitle: page.sub,
-          onSelect: () => {
-            setActiveTab(page.tab);
-            setIsCommandPaletteOpen(false);
-          },
-        });
-      }
-    });
+    quickPages
+      .filter((page) => canAccessTab(currentAccount.roleId, page.tab))
+      .forEach((page, idx) => {
+        if (matchesSearch(page.label, query) || matchesSearch(page.sub, query)) {
+          items.push({
+            id: `PAGE-${idx}`,
+            category: 'CÀI ĐẶT & CHỨC NĂNG',
+            title: page.label,
+            subtitle: page.sub,
+            onSelect: () => {
+              setActiveTab(page.tab);
+              setIsCommandPaletteOpen(false);
+            },
+          });
+        }
+      });
 
     return items.slice(0, 12);
-  }, [query, scopedEmployees, requests, payrollPeriods, setActiveTab, setSelectedEmployeeId, setIsCommandPaletteOpen]);
+  }, [query, scopedEmployees, requests, payrollPeriods, currentAccount.roleId, setActiveTab, setSelectedEmployeeId, setIsCommandPaletteOpen]);
 
   useEffect(() => {
     setSelectedIndex(0);

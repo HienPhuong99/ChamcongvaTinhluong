@@ -13,13 +13,35 @@ const MAX_REQUESTS_PER_WINDOW = 120;
 const ipBuckets = new Map();
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
-const ALLOWED_ORIGINS = [
+const ALLOWED_ORIGINS = new Set([
   'http://localhost:5173',
   'http://localhost:4173',
   'http://127.0.0.1:5173',
+  'http://127.0.0.1:4173',
   'https://hienphuong99.github.io',
   'https://sites.google.com',
-];
+]);
+
+const API_SECRET = process.env.PHUONGHIHI_API_SECRET || 'PHUONGHIHI_API_SECRET_2026';
+
+const ALLOWED_STATE_KEYS = new Set([
+  'employees',
+  'shiftAssignments',
+  'attendanceRecords',
+  'requests',
+  'leaveBalances',
+  'timesheets',
+  'payrollPeriodStates',
+  'payrollOverrides',
+  'announcements',
+  'systemUsers',
+  'auditLogs',
+  'settings',
+  'exportedAt',
+  'app',
+  'action',
+  'token',
+]);
 
 function checkRateLimit(ip) {
   const now = Date.now();
@@ -47,6 +69,7 @@ function sanitizePayload(value, depth = 0) {
     const clean = Object.create(null);
     for (const [k, v] of Object.entries(value)) {
       if (FORBIDDEN_KEYS.has(k)) continue;
+      if (depth === 0 && !ALLOWED_STATE_KEYS.has(k)) continue;
       clean[k] = sanitizePayload(v, depth + 1);
     }
     return clean;
@@ -83,8 +106,9 @@ const server = http.createServer((req, res) => {
   );
 
   const origin = req.headers.origin;
-  if (origin && ALLOWED_ORIGINS.some((o) => origin.startsWith(o))) {
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
   } else {
     res.setHeader('Access-Control-Allow-Origin', 'https://hienphuong99.github.io');
   }
@@ -116,13 +140,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.url === '/api/state' && req.method === 'GET') {
+  if ((req.url === '/api/state' || req.url === '/api/sync') && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(readDb()));
     return;
   }
 
-  if (req.url === '/api/state' && req.method === 'POST') {
+  if ((req.url === '/api/state' || req.url === '/api/sync') && req.method === 'POST') {
     let body = '';
     let byteCount = 0;
     let aborted = false;
@@ -143,7 +167,19 @@ const server = http.createServer((req, res) => {
       if (aborted) return;
       try {
         const parsed = JSON.parse(body || '{}');
-        const sanitized = sanitizePayload(parsed);
+        const headerToken = req.headers['x-phuonghihi-token'];
+        const bodyToken = parsed && typeof parsed === 'object' ? parsed.token : undefined;
+        if (headerToken !== API_SECRET && bodyToken !== API_SECRET) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'Unauthorized: invalid or missing API token.' }));
+          return;
+        }
+        const rawState =
+          parsed && typeof parsed === 'object' && parsed.state && typeof parsed.state === 'object'
+            ? parsed.state
+            : parsed;
+        const sanitized = sanitizePayload(rawState);
+        delete sanitized.token;
         const payload = { syncedAt: new Date().toISOString(), state: sanitized };
         writeDb(payload);
         res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -32,6 +32,7 @@ export interface EmployeeDocument {
   category: 'Hợp đồng' | 'CCCD / Định danh' | 'Bằng cấp' | 'Khác';
   uploadedAt: string;
   fileSize: string;
+  dataUrl?: string;
 }
 
 export interface EmployeeContract {
@@ -246,9 +247,13 @@ export interface SystemSettings {
   // Tính lương
   standardWorkDays: number;
   insuranceRateEmployee: number; // 10.5%
-  personalTaxDeduction: number; // 11,000,000
-  dependentTaxDeduction: number; // 4,400,000
+  maxInsuranceSalary?: number; // Trần đóng BHXH (20 x lương cơ sở = 46,800,000)
+  personalTaxDeduction: number; // 11,000,000 hoặc 15,500,000
+  dependentTaxDeduction: number; // 4,400,000 hoặc 6,200,000
   autoSendPayslipEmail: boolean;
+  // Máy chấm công
+  biometricDeviceName?: string;
+  biometricDeviceIp?: string;
   // Đồng bộ Google Sheets
   googleSheetsWebAppUrl: string;
   autoSyncGoogleSheets: boolean;

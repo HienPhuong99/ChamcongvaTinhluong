@@ -1,4 +1,4 @@
-import {
+import type {
   Announcement,
   AttendanceRecord,
   AuditLogEntry,
@@ -241,39 +241,38 @@ export const INITIAL_EMPLOYEES: Employee[] = RAW_EMPLOYEES.map((raw, idx) => {
   };
 });
 
-// Generate weekly shift schedule matching video (12/10/2026 - 18/10/2026 and 05/10/2026 - 11/10/2026)
+// Generate weekly shift schedule covering all of October 2026 (28/09/2026 - 01/11/2026)
 function buildInitialShiftAssignments(): ShiftAssignment[] {
   const assignments: ShiftAssignment[] = [];
   const dates = [
-    // Week 05/10 - 11/10 (includes Friday 09/10/2026 shown in video!)
-    '2026-10-05',
-    '2026-10-06',
-    '2026-10-07',
-    '2026-10-08',
-    '2026-10-09',
-    '2026-10-10',
-    '2026-10-11',
-    // Week 12/10 - 18/10 (shown in Shift Scheduler in video!)
-    '2026-10-12',
-    '2026-10-13',
-    '2026-10-14',
-    '2026-10-15',
-    '2026-10-16',
-    '2026-10-17',
-    '2026-10-18',
+    // Week 1: 28/09 - 04/10
+    '2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04',
+    // Week 2: 05/10 - 11/10
+    '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11',
+    // Week 3: 12/10 - 18/10
+    '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17', '2026-10-18',
+    // Week 4: 19/10 - 25/10
+    '2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25',
+    // Week 5: 26/10 - 01/11
+    '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01',
   ];
 
   const specificPatterns: Record<string, (ShiftCode | null)[]> = {
     NV0000: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null, null],
-    NV0001: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null],
-    NV0002: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null, null],
-    NV0003: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null, null],
-    NV0004: ['sang', 'chieu', 'dem', 'sang', 'chieu', null, null],
-    NV0005: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'ca_gay', null, null],
-    NV0006: ['ca_gay', 'ca_gay', 'ca_gay', 'ca_gay', 'ca_gay', null, null],
-    NV0007: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null, null],
-    NV0008: [null, 'chieu', 'sang', 'dem', 'chieu', null, null],
-    NV0009: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null, null],
+    NV0001: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'ca_gay', 'hanh_chinh', null],
+    NV0002: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'chieu', null, null],
+    NV0003: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'dem', null, null],
+    NV0004: ['sang', 'chieu', 'dem', 'sang', 'ca_gay', null, null],
+    NV0005: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'chieu', null, null],
+    NV0006: ['ca_gay', 'ca_gay', 'ca_gay', 'ca_gay', 'chieu', null, null],
+    NV0007: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'ca_gay', null, null],
+    NV0008: [null, 'chieu', 'sang', 'dem', 'dem', null, null],
+    NV0009: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'chieu', null, null],
+    NV0010: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'ca_gay', null, null],
+    NV0011: ['sang', 'sang', 'chieu', 'chieu', 'chieu', null, null],
+    NV0012: ['chieu', 'chieu', 'hanh_chinh', 'hanh_chinh', 'chieu', null, null],
+    NV0013: ['hanh_chinh', 'sang', 'chieu', 'hanh_chinh', 'ca_gay', null, null],
+    NV0014: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null, null],
   };
 
   INITIAL_EMPLOYEES.forEach((emp, empIdx) => {
@@ -287,7 +286,8 @@ function buildInitialShiftAssignments(): ShiftAssignment[] {
           assignments.push({ employeeId: emp.id, date: dateStr, shiftCode: sc });
         }
       } else {
-        if (dayOfWeek < 5) {
+        // Other employees work Mon-Thu + Saturday rotation so Friday has exact 15 scheduled shifts
+        if (dayOfWeek < 4 || dayOfWeek === 5) {
           const pool: ShiftCode[] = ['hanh_chinh', 'sang', 'chieu', 'ca_gay', 'dem'];
           const sc = pool[empIdx % pool.length];
           assignments.push({ employeeId: emp.id, date: dateStr, shiftCode: sc });
@@ -301,41 +301,43 @@ function buildInitialShiftAssignments(): ShiftAssignment[] {
 
 export const INITIAL_SHIFT_ASSIGNMENTS: ShiftAssignment[] = buildInitialShiftAssignments();
 
-// Attendance records for today (2026-10-09 as shown in video: 14 Chưa chấm, 35 Không có ca, plus ability to check-in live!)
-export const INITIAL_ATTENDANCE_RECORDS: AttendanceRecord[] = INITIAL_EMPLOYEES.map((emp, idx) => {
-  // Exact 14 employees scheduled with 'Chưa chấm' in video at 00:24
-  if (idx > 0 && idx <= 14) {
-    const shiftPool: ShiftCode[] = ['ca_gay', 'chieu', 'dem', 'ca_gay', 'chieu', 'chieu', 'ca_gay', 'dem', 'chieu', 'ca_gay', 'chieu', 'chieu', 'ca_gay', 'hanh_chinh'];
-    return {
-      id: `ATT-2026-10-09-${emp.code}`,
-      employeeId: emp.id,
-      date: '2026-10-09',
-      shiftCode: shiftPool[idx - 1],
-      status: 'Chưa chấm',
-      lateMinutes: 0,
-      otHours: 0,
-    };
-  }
-  if (idx === 0) {
-    return {
-      id: `ATT-2026-10-09-${emp.code}`,
-      employeeId: emp.id,
-      date: '2026-10-09',
-      shiftCode: 'hanh_chinh',
-      status: 'Chưa chấm',
-      lateMinutes: 0,
-      otHours: 0,
-    };
-  }
-  return {
-    id: `ATT-2026-10-09-${emp.code}`,
-    employeeId: emp.id,
-    date: '2026-10-09',
-    status: 'Không có ca',
-    lateMinutes: 0,
-    otHours: 0,
-  };
-});
+function buildAttendanceForDates(dates: string[]): AttendanceRecord[] {
+  const records: AttendanceRecord[] = [];
+  dates.forEach((dateStr) => {
+    INITIAL_EMPLOYEES.forEach((emp) => {
+      const assigned = INITIAL_SHIFT_ASSIGNMENTS.find(
+        (a) => a.employeeId === emp.id && a.date === dateStr
+      );
+      if (assigned) {
+        records.push({
+          id: `ATT-${dateStr}-${emp.code}`,
+          employeeId: emp.id,
+          date: dateStr,
+          shiftCode: assigned.shiftCode,
+          status: 'Chưa chấm',
+          lateMinutes: 0,
+          otHours: 0,
+        });
+      } else {
+        records.push({
+          id: `ATT-${dateStr}-${emp.code}`,
+          employeeId: emp.id,
+          date: dateStr,
+          status: 'Không có ca',
+          lateMinutes: 0,
+          otHours: 0,
+        });
+      }
+    });
+  });
+  return records;
+}
+
+// Attendance records synced 100% with INITIAL_SHIFT_ASSIGNMENTS for both 2026-10-09 and 2026-10-16
+export const INITIAL_ATTENDANCE_RECORDS: AttendanceRecord[] = buildAttendanceForDates([
+  '2026-10-09',
+  '2026-10-16',
+]);
 
 export const INITIAL_REQUESTS: LeaveOrOtRequest[] = [
   {
@@ -653,9 +655,12 @@ export const INITIAL_SETTINGS: SystemSettings = {
   otMultiplierWeekend: 2.0,
   standardWorkDays: 22,
   insuranceRateEmployee: 10.5,
+  maxInsuranceSalary: 46800000,
   personalTaxDeduction: 11000000,
   dependentTaxDeduction: 4400000,
   autoSendPayslipEmail: true,
+  biometricDeviceName: 'ZKTeco SenseFace 4A (Quầy thu ngân 123 Lê Lợi)',
+  biometricDeviceIp: '192.168.1.201:4370',
   googleSheetsWebAppUrl: 'https://script.google.com/macros/s/AKfycbx66egogcD-sQxv48gLIjCJqeIIEeD_jwkIdmSYAKRsrHKjF_2hV1SMfa-yHRMTt02Z/exec',
   autoSyncGoogleSheets: false,
 };
@@ -664,7 +669,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
   {
     id: 'super_admin',
     name: 'Quản trị cao nhất',
-    permissionCount: 15,
+    permissionCount: 6,
     scopeLabel: 'Toàn hệ thống',
     modules: ['Nhân sự', 'Ca & chấm công', 'Đơn từ', 'Bảng công', 'Lương', 'Báo cáo', 'Hệ thống'],
     permissionsDetail: [
@@ -679,8 +684,8 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
   {
     id: 'hr',
     name: 'Nhân sự',
-    permissionCount: 10,
-    scopeLabel: 'Chưa ai mang',
+    permissionCount: 4,
+    scopeLabel: 'Toàn hệ thống',
     modules: ['Nhân sự', 'Ca & chấm công', 'Đơn từ', 'Bảng công', 'Báo cáo'],
     permissionsDetail: [
       'Thêm, sửa hồ sơ nhân sự, hợp đồng & checklist nhận/trả việc tại phuonghihi',
@@ -692,8 +697,8 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
   {
     id: 'accountant',
     name: 'Kế toán',
-    permissionCount: 8,
-    scopeLabel: 'Chưa ai mang',
+    permissionCount: 4,
+    scopeLabel: 'Toàn hệ thống',
     modules: ['Bảng công', 'Lương', 'Báo cáo'],
     permissionsDetail: [
       'Xem & đối chiếu bảng công đã chốt',
@@ -705,7 +710,7 @@ export const ROLE_DEFINITIONS: RoleDefinition[] = [
   {
     id: 'manager',
     name: 'Quản lý',
-    permissionCount: 8,
+    permissionCount: 4,
     scopeLabel: 'Chỉ phòng ban mình',
     modules: ['Nhân sự', 'Ca & chấm công', 'Đơn từ', 'Bảng công', 'Báo cáo'],
     permissionsDetail: [
@@ -811,7 +816,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     id: 'LOG-001',
     timestamp: '06:18 10/10/2026',
     actor: 'trigger@phuonghihi',
-    action: 'REQUEST_OVERDUE_REMINDED',
+    action: 'Nhắc duyệt đơn quá hạn',
     targetType: 'Đơn từ',
     targetDetail: '2026-10-10',
   },
@@ -819,7 +824,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     id: 'LOG-002',
     timestamp: '04:18 10/10/2026',
     actor: 'trigger@phuonghihi',
-    action: 'REQUEST_OVERDUE_REMINDED',
+    action: 'Nhắc duyệt đơn quá hạn',
     targetType: 'Đơn từ',
     targetDetail: '2026-10-10',
   },
@@ -827,7 +832,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     id: 'LOG-003',
     timestamp: '00:18 10/10/2026',
     actor: 'trigger@phuonghihi',
-    action: 'REQUEST_OVERDUE_REMINDED',
+    action: 'Nhắc duyệt đơn quá hạn',
     targetType: 'Đơn từ',
     targetDetail: '2026-10-10',
   },
@@ -843,7 +848,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     id: 'LOG-005',
     timestamp: '20:18 09/10/2026',
     actor: 'trigger@phuonghihi',
-    action: 'REQUEST_OVERDUE_REMINDED',
+    action: 'Nhắc duyệt đơn quá hạn',
     targetType: 'Đơn từ',
     targetDetail: '2026-10-09',
   },
@@ -851,7 +856,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     id: 'LOG-006',
     timestamp: '18:18 09/10/2026',
     actor: 'trigger@phuonghihi',
-    action: 'REQUEST_OVERDUE_REMINDED',
+    action: 'Nhắc duyệt đơn quá hạn',
     targetType: 'Đơn từ',
     targetDetail: '2026-10-09',
   },

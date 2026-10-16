@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
-import { X, RefreshCw, QrCode, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { X, RefreshCw, QrCode, CheckCircle2, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { generateDoorQrToken, verifyDoorQrToken } from '../utils/helpers';
 
@@ -9,18 +9,37 @@ export const DoorQrKioskModal: React.FC = () => {
     isDoorQrModalOpen,
     setIsDoorQrModalOpen,
     settings,
+    employees,
     scopedEmployees,
+    currentAccount,
+    selectedAttendanceDate,
     checkInOrOut,
     showToast,
   } = useHRM();
 
+  const availableEmps = useMemo(() => {
+    const list =
+      currentAccount.roleId === 'door_kiosk' || scopedEmployees.length === 0
+        ? employees
+        : scopedEmployees;
+    return list.filter((e) => e.status !== 'Đã nghỉ');
+  }, [currentAccount.roleId, employees, scopedEmployees]);
+
   const [secondsLeft, setSecondsLeft] = useState(45);
   const [tokenSeed, setTokenSeed] = useState(() => generateDoorQrToken());
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
-  const [selectedEmpId, setSelectedEmpId] = useState<string>('NV0003');
+  const [selectedEmpId, setSelectedEmpId] = useState<string>(availableEmps[0]?.id || 'NV0003');
+
+  useEffect(() => {
+    if (availableEmps.length > 0 && !availableEmps.some((e) => e.id === selectedEmpId)) {
+      setSelectedEmpId(availableEmps[0].id);
+    }
+  }, [availableEmps, selectedEmpId]);
 
   useEffect(() => {
     if (!isDoorQrModalOpen) return;
+    setTokenSeed(generateDoorQrToken());
+    setSecondsLeft(45);
     const interval = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev <= 1) {
@@ -60,6 +79,14 @@ export const DoorQrKioskModal: React.FC = () => {
   };
 
   const handleSimulateScan = () => {
+    if (!settings.qrEnabled) {
+      showToast(
+        'Chấm công QR đang tắt!',
+        'Vui lòng bật hình thức chấm công Mã QR trong mục Cài đặt.',
+        'warning'
+      );
+      return;
+    }
     const verification = verifyDoorQrToken(tokenSeed);
     if (!verification.valid) {
       showToast('Mã QR không hợp lệ hoặc đã hết hạn!', verification.reason, 'warning');
@@ -71,6 +98,7 @@ export const DoorQrKioskModal: React.FC = () => {
       method: 'QR tại cửa',
       distanceMeters: 5,
       gpsAccuracy: 8,
+      date: selectedAttendanceDate,
       note: `Quét mã QR tại cửa đã xác thực chữ ký (${tokenSeed.slice(-10)})`,
     });
   };
@@ -107,6 +135,13 @@ export const DoorQrKioskModal: React.FC = () => {
 
         {/* QR Code Display */}
         <div className="p-6 flex flex-col items-center text-center">
+          {!settings.qrEnabled && (
+            <div className="w-full mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-center gap-2 text-xs text-amber-800 text-left">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Hình thức chấm công Mã QR hiện đang tắt trong Cài đặt hệ thống.</span>
+            </div>
+          )}
+
           <div className="relative p-4 rounded-2xl bg-white border-2 border-blue-100 shadow-inner">
             {qrDataUrl ? (
               <img
@@ -148,9 +183,9 @@ export const DoorQrKioskModal: React.FC = () => {
               <select
                 value={selectedEmpId}
                 onChange={(e) => setSelectedEmpId(e.target.value)}
-                className="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 text-slate-800 focus:outline-none focus:border-blue-500"
+                className="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 text-slate-800 focus:outline-none focus:border-blue-500 min-w-0"
               >
-                {scopedEmployees.map((emp) => (
+                {availableEmps.map((emp) => (
                   <option key={emp.id} value={emp.id}>
                     {emp.name} ({emp.code} · {emp.department})
                   </option>
@@ -158,7 +193,8 @@ export const DoorQrKioskModal: React.FC = () => {
               </select>
               <button
                 onClick={handleSimulateScan}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition shrink-0 shadow-xs"
+                disabled={!settings.qrEnabled}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold transition shrink-0 shadow-xs"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>Quét chấm công</span>

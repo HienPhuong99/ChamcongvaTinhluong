@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Users,
   CalendarClock,
@@ -12,26 +12,61 @@ import {
   X,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
-import { formatVND } from '../utils/helpers';
+import {
+  canApproveRequests,
+  formatVND,
+  formatVietnameseDayHeader,
+  getGreetingByHour,
+  getTodayIsoDate,
+  isDateExpired,
+} from '../utils/helpers';
 
 export const DashboardView: React.FC = () => {
   const {
     scopedEmployees,
     attendanceRecords,
+    selectedAttendanceDate,
     requests,
     announcements,
+    currentAccount,
     computePayrollRows,
     setActiveTab,
     approveOrRejectRequest,
   } = useHRM();
 
+  const activeDate = selectedAttendanceDate || getTodayIsoDate();
+  const canApprove = canApproveRequests(currentAccount.roleId);
+
+  const scopedIds = useMemo(
+    () => new Set(scopedEmployees.map((e) => e.id)),
+    [scopedEmployees]
+  );
+
   const activeEmps = scopedEmployees.filter((e) => e.status !== 'Đã nghỉ');
-  const pendingRequests = requests.filter((r) => r.status === 'Đang chờ');
+  const pendingRequests = requests.filter(
+    (r) => r.status === 'Đang chờ' && scopedIds.has(r.employeeId)
+  );
   const uncheckedToday = attendanceRecords.filter(
-    (r) => r.status === 'Chưa chấm'
+    (r) =>
+      r.date === activeDate &&
+      r.status === 'Chưa chấm' &&
+      scopedIds.has(r.employeeId)
   ).length;
   const payrollSep = computePayrollRows('2026-09');
   const totalNet = payrollSep.reduce((sum, r) => sum + r.netSalary, 0);
+
+  const visibleAnnouncements = useMemo(() => {
+    const depts = new Set(scopedEmployees.map((e) => e.department));
+    return announcements
+      .filter((ann) => !isDateExpired(ann.expiresAt))
+      .filter(
+        (ann) =>
+          ann.scope === 'Toàn công ty' ||
+          !ann.department ||
+          depts.has(ann.department)
+      )
+      .sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1));
+  }, [announcements, scopedEmployees]);
 
   return (
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -39,13 +74,13 @@ export const DashboardView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            PHUONGHIHI / TỔNG QUAN
+            PHUONGHIHI / TỔNG QUAN · {formatVietnameseDayHeader(activeDate)}
           </div>
           <h1 className="text-2xl font-bold text-slate-900 mt-0.5">
-            Bảng điều khiển quản trị
+            {getGreetingByHour()}, {currentAccount.name}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Tổng quan nhân sự, chấm công hôm nay, đơn chờ duyệt và quỹ lương
+            Tổng quan nhân sự, chấm công ngày {activeDate}, đơn chờ duyệt và quỹ lương
             công ty.
           </p>
         </div>
@@ -94,7 +129,7 @@ export const DashboardView: React.FC = () => {
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500">
-              Chưa chấm công hôm nay
+              Chưa chấm công ({activeDate})
             </span>
             <UserCheck className="w-4 h-4 text-rose-600" />
           </div>
@@ -112,7 +147,7 @@ export const DashboardView: React.FC = () => {
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500">
-              Đơn từ chờ tôi duyệt
+              Đơn từ chờ duyệt
             </span>
             <FileText className="w-4 h-4 text-amber-600" />
           </div>
@@ -153,7 +188,9 @@ export const DashboardView: React.FC = () => {
                 Đơn từ chờ duyệt ({pendingRequests.length})
               </h2>
               <p className="text-xs text-slate-500">
-                Duyệt nhanh một chạm ngay trên bảng điều khiển
+                {canApprove
+                  ? 'Duyệt nhanh một chạm ngay trên bảng điều khiển'
+                  : 'Danh sách đơn từ đang chờ cấp quản lý phê duyệt'}
               </p>
             </div>
             <button
@@ -181,23 +218,36 @@ export const DashboardView: React.FC = () => {
                       {req.startDate} · {req.reason}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => approveOrRejectRequest(req.id, 'Đã duyệt')}
-                      className="w-7 h-7 rounded-lg bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white border border-emerald-200 flex items-center justify-center transition"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => approveOrRejectRequest(req.id, 'Từ chối')}
-                      className="w-7 h-7 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 flex items-center justify-center transition"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  {canApprove ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => approveOrRejectRequest(req.id, 'Đã duyệt')}
+                        title="Duyệt đơn"
+                        className="w-7 h-7 rounded-lg bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white border border-emerald-200 flex items-center justify-center transition cursor-pointer"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => approveOrRejectRequest(req.id, 'Từ chối')}
+                        title="Từ chối đơn"
+                        className="w-7 h-7 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 flex items-center justify-center transition cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold shrink-0">
+                      Đang chờ
+                    </span>
+                  )}
                 </div>
               );
             })}
+            {pendingRequests.length === 0 && (
+              <div className="py-6 text-center text-xs text-slate-400">
+                Không có đơn từ nào đang chờ duyệt.
+              </div>
+            )}
           </div>
         </div>
 
@@ -209,7 +259,7 @@ export const DashboardView: React.FC = () => {
                 Bản tin nội bộ mới nhất
               </h2>
               <p className="text-xs text-slate-500">
-                Thông báo ghim cho toàn công ty
+                Thông báo ghim còn hiệu lực cho toàn công ty
               </p>
             </div>
             <button
@@ -222,7 +272,7 @@ export const DashboardView: React.FC = () => {
           </div>
 
           <div className="space-y-3">
-            {announcements.slice(0, 3).map((ann) => (
+            {visibleAnnouncements.slice(0, 3).map((ann) => (
               <div
                 key={ann.id}
                 className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1"
@@ -249,3 +299,4 @@ export const DashboardView: React.FC = () => {
     </div>
   );
 };
+

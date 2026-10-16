@@ -13,30 +13,55 @@ import {
   Menu,
   Search,
   Bell,
+  ShieldCheck,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
-import { calculateDistanceMeters, formatVND, getInitials } from '../utils/helpers';
+import { SHIFT_TEMPLATES } from '../data/seedData';
+import {
+  calculateDistanceMeters,
+  formatIsoToVN,
+  formatVND,
+  formatVietnameseDayHeader,
+  generatePersonalQrPayload,
+  getGreetingByHour,
+  getInitials,
+  getTodayIsoDate,
+  verifyDoorQrToken,
+  verifyPersonalQrPayload,
+} from '../utils/helpers';
 
 export const MobileAppView: React.FC = () => {
   const {
     scopedEmployees,
+    employees,
     settings,
     attendanceRecords,
+    shiftAssignments,
+    selectedAttendanceDate,
+    currentAccount,
     checkInOrOut,
     createRequest,
     computePayrollRows,
+    showToast,
     setIsDoorQrModalOpen,
     setIsMobileMenuOpen,
     setIsCommandPaletteOpen,
   } = useHRM();
 
-  const [selectedEmpId, setSelectedEmpId] = useState<string>('NV0000');
-  const [clockStr, setClockStr] = useState<string>('15:41:39');
+  const activeDate = selectedAttendanceDate || getTodayIsoDate();
+
+  const [selectedEmpId, setSelectedEmpId] = useState<string>(
+    currentAccount.employeeId || scopedEmployees[0]?.id || 'NV0000'
+  );
+  const [clockStr, setClockStr] = useState<string>('08:00:00');
   const [simulatedOffset, setSimulatedOffset] = useState<'in_range' | 'out_of_range'>('in_range');
   const [mobileSubTab, setMobileSubTab] = useState<'checkin' | 'my_qr' | 'quick_req' | 'payslip'>(
     'checkin'
   );
   const [personalQrUrl, setPersonalQrUrl] = useState<string>('');
+  const [personalQrRaw, setPersonalQrRaw] = useState<string>('');
+  const [scanInputToken, setScanInputToken] = useState<string>('');
+  const [payslipPeriod, setPayslipPeriod] = useState<'2026-10' | '2026-09' | '2026-08'>('2026-09');
   const [reqType, setReqType] = useState<
     | 'Nghỉ phép năm'
     | 'Đổi ca trực'
@@ -44,7 +69,7 @@ export const MobileAppView: React.FC = () => {
     | 'Đăng ký tăng ca'
     | 'Bổ sung chấm công'
   >('Nghỉ phép năm');
-  const [reqDate, setReqDate] = useState<string>('10/10/2026');
+  const [reqDate, setReqDate] = useState<string>(() => formatIsoToVN(activeDate));
   const [reqReason, setReqReason] = useState('');
   const [reqTargetShift, setReqTargetShift] = useState<'sang' | 'chieu' | 'hanh_chinh' | 'ca_gay'>('sang');
   const [reqAdvanceAmount, setReqAdvanceAmount] = useState<number>(3000000);
@@ -53,12 +78,32 @@ export const MobileAppView: React.FC = () => {
   const mapInstanceRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.CircleMarker | null>(null);
 
+  useEffect(() => {
+    if (
+      !scopedEmployees.some((e) => e.id === selectedEmpId) &&
+      scopedEmployees.length > 0
+    ) {
+      setSelectedEmpId(currentAccount.employeeId || scopedEmployees[0].id);
+    }
+  }, [scopedEmployees, selectedEmpId, currentAccount.employeeId]);
+
   const currentEmp =
     scopedEmployees.find((e) => e.id === selectedEmpId) || scopedEmployees[0];
 
   const todayRecord = attendanceRecords.find(
-    (r) => r.employeeId === currentEmp?.id && r.date === '2026-10-09'
+    (r) => r.employeeId === currentEmp?.id && r.date === activeDate
   );
+
+  const assignedShiftCode =
+    shiftAssignments.find(
+      (s) => s.employeeId === currentEmp?.id && s.date === activeDate
+    )?.shiftCode ||
+    todayRecord?.shiftCode ||
+    'hanh_chinh';
+
+  const assignedShiftDef =
+    SHIFT_TEMPLATES.find((s) => s.code === assignedShiftCode) ||
+    SHIFT_TEMPLATES[0];
 
   // User simulated coordinates relative to office
   const userCoords =
@@ -146,18 +191,16 @@ export const MobileAppView: React.FC = () => {
     };
   }, [mobileSubTab, settings.officeLat, settings.officeLng, settings.allowedRadiusMeters, simulatedOffset]);
 
-  // Personal QR generator
+  // Signed Personal QR generator (Issue 1.10)
   useEffect(() => {
     if (!currentEmp) return;
-    QRCode.toDataURL(
-      JSON.stringify({
-        empCode: currentEmp.code,
-        empName: currentEmp.name,
-        dept: currentEmp.department,
-        ts: Date.now(),
-      }),
-      { width: 220, margin: 2 }
-    )
+    const signedPayload = generatePersonalQrPayload(
+      currentEmp.code,
+      currentEmp.name,
+      currentEmp.department
+    );
+    setPersonalQrRaw(signedPayload);
+    QRCode.toDataURL(signedPayload, { width: 220, margin: 2 })
       .then(setPersonalQrUrl)
       .catch(() => {});
   }, [currentEmp]);
@@ -166,6 +209,7 @@ export const MobileAppView: React.FC = () => {
     if (!currentEmp) return;
     checkInOrOut({
       employeeId: currentEmp.id,
+      date: activeDate,
       method: isInRange ? 'GPS' : 'Từ xa',
       distanceMeters,
       gpsAccuracy: 12,
@@ -175,14 +219,61 @@ export const MobileAppView: React.FC = () => {
     });
   };
 
+  const handleVerifyScannedQr = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentEmp) return;
+    const raw = scanInputToken.trim() || personalQrRaw;
+    if (!settings.qrEnabled) {
+      showToast('Chấm công QR đang tắt!', 'Vui lòng bật Chấm công bằng mã QR trong Cài đặt.');
+      return;
+    }
+
+    // 1. Check if it's a signed personal QR payload
+    const personalCheck = verifyPersonalQrPayload(raw);
+    if (personalCheck.valid && personalCheck.empCode) {
+      const targetEmp =
+        employees.find((emp) => emp.code === personalCheck.empCode) || currentEmp;
+      checkInOrOut({
+        employeeId: targetEmp.id,
+        date: activeDate,
+        method: 'QR tại cửa',
+        distanceMeters: 4,
+        gpsAccuracy: 5,
+        note: `Quét mã QR định danh chữ ký số hợp lệ (${personalCheck.empCode})`,
+      });
+      setScanInputToken('');
+      return;
+    }
+
+    // 2. Check if it's a dynamic 45s Door QR token
+    const doorCheck = verifyDoorQrToken(raw);
+    if (doorCheck.valid) {
+      checkInOrOut({
+        employeeId: currentEmp.id,
+        date: activeDate,
+        method: 'QR tại cửa',
+        distanceMeters: 5,
+        gpsAccuracy: 6,
+        note: 'Quét mã QR động 45s tại cửa văn phòng hợp lệ',
+      });
+      setScanInputToken('');
+      return;
+    }
+
+    showToast(
+      'Mã QR không hợp lệ hoặc đã hết hạn!',
+      personalCheck.error || doorCheck.error || 'Chữ ký số QR không khớp hoặc đã quá hạn.'
+    );
+  };
+
   const handleQuickRequestSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentEmp || !reqReason.trim()) return;
     createRequest({
       employeeId: currentEmp.id,
       type: reqType,
-      startDate: reqDate || '10/10/2026',
-      endDate: reqDate || '10/10/2026',
+      startDate: reqDate || formatIsoToVN(activeDate),
+      endDate: reqDate || formatIsoToVN(activeDate),
       reason: reqReason,
       days: 1,
       otHours: reqType === 'Đăng ký tăng ca' ? 2 : undefined,
@@ -193,7 +284,7 @@ export const MobileAppView: React.FC = () => {
     setMobileSubTab('checkin');
   };
 
-  const myPayslip = computePayrollRows('2026-09').find(
+  const myPayslip = computePayrollRows(payslipPeriod).find(
     (r) => r.employeeId === currentEmp?.id
   );
 
@@ -301,7 +392,7 @@ export const MobileAppView: React.FC = () => {
               {/* Blue Header Card (Exact match to 00:12 in video) */}
               <div className="rounded-3xl bg-gradient-to-b from-blue-600 to-blue-700 p-4 text-white shadow-md">
                 <div className="text-xs text-blue-100 font-medium">
-                  Chào buổi chiều,
+                  {getGreetingByHour()},
                 </div>
                 <div className="text-lg font-bold tracking-tight mt-0.5 truncate">
                   {currentEmp?.name}
@@ -310,13 +401,13 @@ export const MobileAppView: React.FC = () => {
                 {/* Shift Info Box */}
                 <div className="mt-3 p-3.5 rounded-2xl bg-white text-slate-900 shadow-xs">
                   <div className="text-xs font-semibold text-slate-500">
-                    Thứ Sáu, 09/10/2026
+                    {formatVietnameseDayHeader(activeDate)}
                   </div>
                   <div className="text-xl font-extrabold text-slate-900 mt-0.5">
-                    Hành chính
+                    {assignedShiftDef.name}
                   </div>
                   <div className="text-xs font-medium text-slate-600 mt-0.5 truncate">
-                    08:00 – 17:30 · {settings.officeName}
+                    {assignedShiftDef.startTime}–{assignedShiftDef.endTime} · {settings.officeName}
                   </div>
                 </div>
               </div>
@@ -346,6 +437,8 @@ export const MobileAppView: React.FC = () => {
                   <span className="text-sm font-bold tracking-wide">
                     {todayRecord?.checkIn && !todayRecord?.checkOut
                       ? 'Chấm công ra'
+                      : todayRecord?.checkOut
+                      ? 'Cập nhật giờ ra'
                       : 'Chấm công vào'}
                   </span>
                 </button>
@@ -386,7 +479,7 @@ export const MobileAppView: React.FC = () => {
           {mobileSubTab === 'my_qr' && (
             <div className="bg-white rounded-3xl border border-slate-200 p-5 text-center space-y-3">
               <div className="text-sm font-bold text-slate-900">
-                Mã QR định danh của tôi
+                Mã QR định danh của tôi (Chữ ký số)
               </div>
               <p className="text-xs text-slate-500">
                 Đưa mã này cho Quản lý quét tại quầy cửa hàng hoặc quét mã QR động 45s tại cửa.
@@ -398,14 +491,38 @@ export const MobileAppView: React.FC = () => {
                   className="w-48 h-48 mx-auto rounded-2xl border border-slate-200 p-2"
                 />
               )}
-              <div className="text-xs font-semibold text-blue-600">
-                {currentEmp?.name} · {currentEmp?.code}
+              <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>{currentEmp?.name} · {currentEmp?.code}</span>
               </div>
+
+              <form onSubmit={handleVerifyScannedQr} className="pt-2 space-y-2 text-left">
+                <label className="block text-[11px] font-semibold text-slate-600">
+                  Xác thực nhanh mã QR (Dán chuỗi QR hoặc bấm xác nhận mã hiện tại):
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={scanInputToken}
+                    onChange={(e) => setScanInputToken(e.target.value)}
+                    placeholder="Dán chuỗi QR hoặc để trống để quét mã của tôi..."
+                    className="flex-1 px-2.5 py-1.5 rounded-xl border border-slate-200 text-[11px] font-mono"
+                  />
+                  <button
+                    type="submit"
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shrink-0 cursor-pointer"
+                  >
+                    Xác thực QR
+                  </button>
+                </div>
+              </form>
+
               <button
+                type="button"
                 onClick={() => setIsDoorQrModalOpen(true)}
-                className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold"
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
               >
-                Quét mã QR tại cửa văn phòng
+                Mở Kiosk QR động 45s tại cửa văn phòng
               </button>
             </div>
           )}
@@ -442,7 +559,7 @@ export const MobileAppView: React.FC = () => {
                   type="text"
                   value={reqDate}
                   onChange={(e) => setReqDate(e.target.value)}
-                  placeholder="10/10/2026"
+                  placeholder="16/10/2026"
                   className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50 font-semibold text-slate-800"
                 />
               </div>
@@ -507,13 +624,21 @@ export const MobileAppView: React.FC = () => {
 
           {mobileSubTab === 'payslip' && (
             <div className="bg-white rounded-3xl border border-slate-200 p-5 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-bold text-slate-900">
-                  Phiếu lương kỳ 2026-09
+                  Phiếu lương kỳ
                 </span>
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700">
-                  Đã chốt
-                </span>
+                <select
+                  value={payslipPeriod}
+                  onChange={(e) =>
+                    setPayslipPeriod(e.target.value as '2026-10' | '2026-09' | '2026-08')
+                  }
+                  className="px-2.5 py-1 rounded-xl border border-slate-200 text-xs font-bold bg-slate-50 text-slate-800"
+                >
+                  <option value="2026-10">Tháng 10/2026</option>
+                  <option value="2026-09">Tháng 9/2026</option>
+                  <option value="2026-08">Tháng 8/2026</option>
+                </select>
               </div>
               {myPayslip ? (
                 <div className="space-y-2 text-xs pt-2 border-t border-slate-100">
@@ -534,6 +659,20 @@ export const MobileAppView: React.FC = () => {
                     <span className="text-slate-500">Phụ cấp + Tăng ca + Thưởng:</span>
                     <span className="font-semibold text-emerald-600">
                       +{formatVND(myPayslip.allowance + myPayslip.otAmount + myPayslip.bonus)}
+                    </span>
+                  </div>
+                  {myPayslip.latePenaltyAmount > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Phạt đi muộn:</span>
+                      <span className="font-semibold text-rose-600">
+                        -{formatVND(myPayslip.latePenaltyAmount)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Khấu trừ khác &amp; Tạm ứng EWA:</span>
+                    <span className="font-semibold text-rose-600">
+                      -{formatVND(myPayslip.otherDeduction)}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -680,3 +819,4 @@ export const MobileAppView: React.FC = () => {
     </div>
   );
 };
+

@@ -45,8 +45,11 @@ const MobileAppView = lazy(() =>
 );
 
 const MainShell: React.FC = () => {
-  const { activeTab, setActiveTab, toasts, dismissToast, requests } = useHRM();
-  const pendingCount = requests.filter((r) => r.status === 'Đang chờ').length;
+  const { activeTab, setActiveTab, toasts, dismissToast, requests, scopedEmployees, currentAccount } = useHRM();
+  const scopedIds = new Set(scopedEmployees.map((e) => e.id));
+  const pendingCount = requests.filter(
+    (r) => r.status === 'Đang chờ' && scopedIds.has(r.employeeId)
+  ).length;
 
   const renderActiveView = () => {
     switch (activeTab) {
@@ -104,7 +107,13 @@ const MainShell: React.FC = () => {
         <nav className="lg:hidden h-14 bg-white border-t border-slate-200 px-2 grid grid-cols-5 gap-1 items-center shrink-0 z-20">
           {[
             { id: 'shifts' as const, label: 'Ca trực', icon: CalendarClock },
-            { id: 'attendance' as const, label: 'Điểm danh', icon: UserCheck },
+            {
+              id: (currentAccount.roleId === 'employee' ? 'timesheet' : 'attendance') as
+                | 'timesheet'
+                | 'attendance',
+              label: currentAccount.roleId === 'employee' ? 'Bảng công' : 'Điểm danh',
+              icon: UserCheck,
+            },
             { id: 'mobile_app' as const, label: 'Chấm công', icon: Smartphone, highlight: true },
             { id: 'requests' as const, label: 'Đơn từ', icon: FileText, badge: pendingCount },
             { id: 'payroll' as const, label: 'Bảng lương', icon: Wallet },

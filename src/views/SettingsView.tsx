@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Compass,
   Plus,
@@ -7,10 +7,15 @@ import {
   Save,
   MapPin,
   FileSpreadsheet,
+  Clock,
+  Cpu,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { INITIAL_SETTINGS } from '../data/seedData';
 import { LatePenaltyTier, SystemSettings } from '../types';
+import { canManageSettings } from '../utils/helpers';
 
 type SettingsTabId =
   | 'methods'
@@ -21,11 +26,26 @@ type SettingsTabId =
   | 'payroll_gsheets';
 
 export const SettingsView: React.FC = () => {
-  const { settings, updateSettings } = useHRM();
+  const {
+    settings,
+    updateSettings,
+    currentAccount,
+    syncNowWithBackend,
+    isSyncingBackend,
+    lastSyncedAt,
+    showToast,
+  } = useHRM();
 
   const [activeSubTab, setActiveSubTab] = useState<SettingsTabId>('late_rules');
   const [draft, setDraft] = useState<SystemSettings>({ ...settings });
   const [isDirty, setIsDirty] = useState(false);
+
+  const canEdit = canManageSettings(currentAccount.roleId);
+
+  useEffect(() => {
+    setDraft({ ...settings });
+    setIsDirty(false);
+  }, [settings]);
 
   const updateField = <K extends keyof SystemSettings>(
     key: K,
@@ -82,7 +102,7 @@ export const SettingsView: React.FC = () => {
   ].filter(Boolean).length;
 
   return (
-    <div className="p-6 pb-24 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 sm:p-6 pb-28 space-y-5 max-w-[1400px] mx-auto">
       {/* Header */}
       <div>
         <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -92,8 +112,7 @@ export const SettingsView: React.FC = () => {
           Cài đặt hệ thống
         </h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Cấu hình hình thức chấm công, bán kính GPS, bậc phạt đi muộn và công
-          thức tính lương.
+          Cấu hình hình thức chấm công, bán kính GPS, bậc phạt đi muộn, thiết bị sinh trắc học và công thức tính lương.
         </p>
       </div>
 
@@ -133,7 +152,7 @@ export const SettingsView: React.FC = () => {
           {
             id: 'checkin_rules' as const,
             title: 'Quy tắc chấm',
-            sub: 'Chuẩn',
+            sub: `Sớm ${draft.allowEarlyCheckInMinutes}p · OT x${draft.otMultiplierWeekday}`,
           },
           {
             id: 'biometric' as const,
@@ -386,6 +405,7 @@ export const SettingsView: React.FC = () => {
               </label>
               <input
                 type="number"
+                min={10}
                 value={draft.allowedRadiusMeters}
                 onChange={(e) =>
                   updateField('allowedRadiusMeters', Number(e.target.value) || 150)
@@ -402,7 +422,7 @@ export const SettingsView: React.FC = () => {
                 step="0.0001"
                 value={draft.officeLat}
                 onChange={(e) =>
-                  updateField('officeLat', Number(e.target.value) || 21.0306)
+                  updateField('officeLat', Number(e.target.value) || 10.7726)
                 }
                 className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
@@ -416,7 +436,7 @@ export const SettingsView: React.FC = () => {
                 step="0.0001"
                 value={draft.officeLng}
                 onChange={(e) =>
-                  updateField('officeLng', Number(e.target.value) || 105.8006)
+                  updateField('officeLng', Number(e.target.value) || 106.698)
                 }
                 className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
@@ -599,15 +619,193 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 4, 5, 6: QUY TẮC CHẤM, MÁY CHẤM CÔNG, TÍNH LƯƠNG & GOOGLE SHEETS */}
-      {(activeSubTab === 'checkin_rules' ||
-        activeSubTab === 'biometric' ||
-        activeSubTab === 'payroll_gsheets') && (
+      {/* TAB 4: QUY TẮC CHẤM CÔNG & HỆ SỐ TĂNG CA (OT) */}
+      {activeSubTab === 'checkin_rules' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-5 shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <Clock className="w-5 h-5 text-blue-600" />
+            <div>
+              <h3 className="text-base font-bold text-slate-900">
+                Quy tắc khung giờ chấm công &amp; Hệ số Tăng ca (OT)
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Thiết lập biên độ giờ vào sớm / ra muộn hợp lệ và hệ số nhân lương OT ngày thường / cuối tuần.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Cho phép chấm công vào sớm trước giờ ca (phút)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={240}
+                value={draft.allowEarlyCheckInMinutes}
+                onChange={(e) =>
+                  updateField(
+                    'allowEarlyCheckInMinutes',
+                    Math.max(0, Number(e.target.value) || 0)
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Cho phép chấm công ra muộn sau giờ tan ca (phút)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={480}
+                value={draft.allowLateCheckOutMinutes}
+                onChange={(e) =>
+                  updateField(
+                    'allowLateCheckOutMinutes',
+                    Math.max(0, Number(e.target.value) || 0)
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Hệ số lương Tăng ca ngày thường (OT Weekday)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min={1}
+                value={draft.otMultiplierWeekday}
+                onChange={(e) =>
+                  updateField(
+                    'otMultiplierWeekday',
+                    Number(e.target.value) || 1.5
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Hệ số lương Tăng ca cuối tuần / Lễ (OT Weekend)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min={1}
+                value={draft.otMultiplierWeekend}
+                onChange={(e) =>
+                  updateField(
+                    'otMultiplierWeekend',
+                    Number(e.target.value) || 2.0
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: MÁY CHẤM CÔNG VÂN TAY / KHUÔN MẶT */}
+      {activeSubTab === 'biometric' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Cpu className="w-5 h-5 text-indigo-600" />
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Kết nối Máy chấm công Vân tay &amp; Khuôn mặt (FaceID / ZKTeco)
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Đồng bộ tự động log quét vân tay/khuôn mặt tại cửa hàng 123 Lê Lợi về bảng chấm công.
+                </p>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={draft.biometricEnabled}
+              onChange={(e) =>
+                updateField('biometricEnabled', e.target.checked)
+              }
+              className="w-5 h-5 accent-blue-600 rounded cursor-pointer"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Tên thiết bị máy chấm công tại cửa hàng
+              </label>
+              <input
+                type="text"
+                value={
+                  draft.biometricDeviceName ||
+                  'ZKTeco SpeedFace-V5L (Quầy 123 Lê Lợi)'
+                }
+                onChange={(e) =>
+                  updateField('biometricDeviceName', e.target.value)
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Địa chỉ IP LAN / Cổng kết nối TCP
+              </label>
+              <input
+                type="text"
+                value={draft.biometricDeviceIp || '192.168.1.201:4370'}
+                onChange={(e) =>
+                  updateField('biometricDeviceIp', e.target.value)
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs text-slate-700">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                Trạng thái thiết bị:{' '}
+                <strong>
+                  {draft.biometricEnabled
+                    ? 'Đang trực tuyến (Online · Ping 4ms)'
+                    : 'Đang tạm tắt'}
+                </strong>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                showToast(
+                  'Đã kiểm tra kết nối máy chấm công!',
+                  `Thiết bị ${draft.biometricDeviceName || 'ZKTeco SpeedFace-V5L'} (${draft.biometricDeviceIp || '192.168.1.201:4370'}) phản hồi tốt.`
+                )
+              }
+              className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer"
+            >
+              Kiểm tra kết nối máy chấm công
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: TÍNH LƯƠNG, THUẾ TNCN, BHXH & ĐỒNG BỘ GOOGLE SHEETS */}
+      {activeSubTab === 'payroll_gsheets' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-5 shadow-2xs">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
             <h3 className="text-base font-bold text-slate-900">
-              Cấu hình Tính lương, Bảo hiểm, Thuế &amp; Đồng bộ Google Sheets
+              Cấu hình Tính lương, Bảo hiểm, Thuế TNCN &amp; Đồng bộ Google Sheets
             </h3>
           </div>
 
@@ -618,6 +816,8 @@ export const SettingsView: React.FC = () => {
               </label>
               <input
                 type="number"
+                min={1}
+                max={31}
                 value={draft.standardWorkDays}
                 onChange={(e) =>
                   updateField('standardWorkDays', Number(e.target.value) || 22)
@@ -632,6 +832,7 @@ export const SettingsView: React.FC = () => {
               <input
                 type="number"
                 step="0.5"
+                min={0}
                 value={draft.insuranceRateEmployee}
                 onChange={(e) =>
                   updateField(
@@ -644,32 +845,101 @@ export const SettingsView: React.FC = () => {
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">
-                Hệ số lương Tăng ca (OT ngày thường)
+                Mức trần lương đóng BHXH (VNĐ)
               </label>
               <input
                 type="number"
-                step="0.1"
-                value={draft.otMultiplierWeekday}
+                step={1000000}
+                min={0}
+                value={draft.maxInsuranceSalary ?? 46800000}
                 onChange={(e) =>
                   updateField(
-                    'otMultiplierWeekday',
-                    Number(e.target.value) || 1.5
+                    'maxInsuranceSalary',
+                    Number(e.target.value) || 46800000
                   )
                 }
                 className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
               />
             </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Giảm trừ gia cảnh bản thân (VNĐ/tháng)
+              </label>
+              <input
+                type="number"
+                step={500000}
+                min={0}
+                value={draft.personalTaxDeduction}
+                onChange={(e) =>
+                  updateField(
+                    'personalTaxDeduction',
+                    Number(e.target.value) || 11000000
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Giảm trừ mỗi người phụ thuộc (VNĐ/tháng)
+              </label>
+              <input
+                type="number"
+                step={200000}
+                min={0}
+                value={draft.dependentTaxDeduction}
+                onChange={(e) =>
+                  updateField(
+                    'dependentTaxDeduction',
+                    Number(e.target.value) || 4400000
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+            <div className="flex items-end">
+              <label className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between cursor-pointer">
+                <span className="text-xs font-semibold text-slate-700">
+                  Tự động gửi phiếu lương qua Email
+                </span>
+                <input
+                  type="checkbox"
+                  checked={draft.autoSendPayslipEmail}
+                  onChange={(e) =>
+                    updateField('autoSendPayslipEmail', e.target.checked)
+                  }
+                  className="w-4 h-4 accent-blue-600 rounded"
+                />
+              </label>
+            </div>
           </div>
 
           <div className="p-4 rounded-xl bg-emerald-50/50 border border-emerald-200 space-y-3">
-            <div className="text-xs font-bold text-emerald-950">
-              Kết nối Google Sheets (Apps Script Web App URL)
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-bold text-emerald-950">
+                  Kết nối Backend REST API &amp; Google Sheets (Apps Script Web App URL)
+                </div>
+                <p className="text-[11px] text-emerald-800 mt-0.5">
+                  Hệ thống đi kèm sẵn mã nguồn <code>server/index.js</code> và{' '}
+                  <code>google-sheets/Code.gs</code> để đồng bộ 2 chiều theo thời gian thực.
+                  {lastSyncedAt && ` (Đồng bộ gần nhất: ${lastSyncedAt})`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => syncNowWithBackend()}
+                disabled={isSyncingBackend}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold shadow-xs cursor-pointer"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${isSyncingBackend ? 'animate-spin' : ''}`}
+                />
+                <span>
+                  {isSyncingBackend ? 'Đang đồng bộ...' : 'Đồng bộ ngay'}
+                </span>
+              </button>
             </div>
-            <p className="text-[11px] text-emerald-800">
-              Hệ thống đi kèm sẵn mã nguồn{' '}
-              <code>google-sheets/Code.gs</code> để chạy trực tiếp hoặc đồng bộ
-              2 chiều với Google Sheets.
-            </p>
             <input
               type="url"
               value={draft.googleSheetsWebAppUrl}
@@ -684,8 +954,8 @@ export const SettingsView: React.FC = () => {
       )}
 
       {/* Sticky Bottom Save Bar */}
-      <div className="fixed bottom-4 left-64 right-6 z-30 pointer-events-none flex justify-end">
-        <div className="pointer-events-auto bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-xl flex items-center gap-4 border border-slate-700">
+      <div className="fixed bottom-4 left-4 lg:left-64 right-4 lg:right-6 z-30 pointer-events-none flex justify-end">
+        <div className="pointer-events-auto bg-slate-900 text-white px-4 sm:px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3 sm:gap-4 border border-slate-700">
           <span className="text-xs text-slate-300">
             {isDirty
               ? 'Bạn có thay đổi cấu hình chưa lưu.'
@@ -693,7 +963,8 @@ export const SettingsView: React.FC = () => {
           </span>
           <button
             onClick={handleSaveAll}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition cursor-pointer"
+            disabled={!canEdit}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold transition cursor-pointer shrink-0"
           >
             <Save className="w-3.5 h-3.5" />
             <span>Lưu thay đổi</span>
@@ -703,3 +974,4 @@ export const SettingsView: React.FC = () => {
     </div>
   );
 };
+

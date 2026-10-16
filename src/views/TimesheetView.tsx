@@ -6,40 +6,71 @@ import {
   Download,
   RefreshCw,
   Search,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
-import { exportToCSV, matchesSearch } from '../utils/helpers';
+import {
+  canManagePayroll,
+  canManageSchedules,
+  exportToCSV,
+  matchesSearch,
+} from '../utils/helpers';
+
+const PERIODS = ['2026-08', '2026-09', '2026-10'] as const;
+type PeriodKey = (typeof PERIODS)[number];
+
+const PERIOD_LABELS: Record<PeriodKey, string> = {
+  '2026-08': 'Tháng 8/2026',
+  '2026-09': 'Tháng 9/2026',
+  '2026-10': 'Tháng 10/2026',
+};
 
 export const TimesheetView: React.FC = () => {
   const {
     scopedEmployees,
     timesheets,
+    payrollPeriods,
+    settings,
+    currentAccount,
     aggregateTimesheet,
     toggleConfirmTimesheet,
     lockTimesheetPeriod,
+    unlockTimesheetPeriod,
   } = useHRM();
 
-  const [period, setPeriod] = useState<'2026-10' | '2026-09'>('2026-10');
+  const [period, setPeriod] = useState<PeriodKey>('2026-10');
   const [searchQuery, setSearchQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState('ALL');
   const [confirmFilter, setConfirmFilter] = useState<'ALL' | 'CONFIRMED' | 'PENDING'>('ALL');
 
+  const canManage =
+    canManageSchedules(currentAccount.roleId) ||
+    canManagePayroll(currentAccount.roleId);
+
+  const periodIdx = PERIODS.indexOf(period);
+  const periodState = payrollPeriods.find((p) => p.period === period);
+  const isPeriodLocked = Boolean(
+    periodState?.step2TimesheetLocked || periodState?.locked
+  );
+
   const rows = useMemo(() => {
+    const standardDays = settings.standardWorkDays || 22;
     return scopedEmployees
       .filter((e) => e.status !== 'Đã nghỉ')
-      .map((emp) => {
+      .map((emp, idx) => {
         const ts = timesheets.find(
           (t) => t.employeeId === emp.id && t.period === period
         ) || {
           employeeId: emp.id,
           period,
-          standardDays: 22,
-          actualDays: 20,
-          paidLeaveDays: 1,
+          standardDays,
+          actualDays: 20 + (idx % 3) * 0.5,
+          paidLeaveDays: idx % 3 === 0 ? 1 : 0,
           absentDays: 0,
-          lateCount: 1,
-          lateMinutes: 10,
-          otHours: 0,
+          lateCount: idx % 4 === 0 ? 1 : 0,
+          lateMinutes: idx % 4 === 0 ? 10 : 0,
+          otHours: idx % 3 === 0 ? 3 : 0,
           confirmed: true,
         };
         return { emp, ts };
@@ -57,7 +88,15 @@ export const TimesheetView: React.FC = () => {
         }
         return true;
       });
-  }, [scopedEmployees, timesheets, period, deptFilter, confirmFilter, searchQuery]);
+  }, [
+    scopedEmployees,
+    timesheets,
+    period,
+    deptFilter,
+    confirmFilter,
+    searchQuery,
+    settings.standardWorkDays,
+  ]);
 
   const handleExportCSV = () => {
     exportToCSV(
@@ -92,28 +131,55 @@ export const TimesheetView: React.FC = () => {
 
       {/* Period & Actions Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
-          <button
-            onClick={() => setPeriod('2026-09')}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800">
-            <Calendar className="w-3.5 h-3.5 text-slate-500" />
-            <span>
-              {period === '2026-10' ? 'Tháng 10/2026' : 'Tháng 9/2026'}
-            </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
+            <button
+              onClick={() => {
+                if (periodIdx > 0) setPeriod(PERIODS[periodIdx - 1]);
+              }}
+              disabled={periodIdx <= 0}
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800">
+              <Calendar className="w-3.5 h-3.5 text-slate-500" />
+              <span>{PERIOD_LABELS[period]}</span>
+            </div>
+            <button
+              onClick={() => {
+                if (periodIdx < PERIODS.length - 1)
+                  setPeriod(PERIODS[periodIdx + 1]);
+              }}
+              disabled={periodIdx >= PERIODS.length - 1}
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            onClick={() => setPeriod('2026-10')}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
+
+          <span
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold ${
+              isPeriodLocked
+                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            }`}
           >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+            {isPeriodLocked ? (
+              <>
+                <Lock className="w-3.5 h-3.5" />
+                <span>Đã chốt kỳ công</span>
+              </>
+            ) : (
+              <>
+                <Unlock className="w-3.5 h-3.5" />
+                <span>Đang mở kỳ công</span>
+              </>
+            )}
+          </span>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             onClick={handleExportCSV}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs transition"
@@ -121,19 +187,35 @@ export const TimesheetView: React.FC = () => {
             <Download className="w-3.5 h-3.5 text-slate-500" />
             <span>Xuất CSV</span>
           </button>
-          <button
-            onClick={() => lockTimesheetPeriod(period)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs transition"
-          >
-            <span>Chốt kỳ công</span>
-          </button>
-          <button
-            onClick={() => aggregateTimesheet(period)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Tổng hợp</span>
-          </button>
+          {canManage && (
+            <>
+              {isPeriodLocked ? (
+                <button
+                  onClick={() => unlockTimesheetPeriod(period)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200 hover:bg-amber-100 text-xs font-semibold text-amber-800 shadow-2xs transition cursor-pointer"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>Mở khoá kỳ công</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => lockTimesheetPeriod(period)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs transition cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Chốt kỳ công</span>
+                </button>
+              )}
+              <button
+                onClick={() => aggregateTimesheet(period)}
+                disabled={isPeriodLocked}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Tổng hợp</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -164,6 +246,7 @@ export const TimesheetView: React.FC = () => {
               <option value="Kế toán">Kế toán</option>
               <option value="Marketing">Marketing</option>
               <option value="Vận hành">Vận hành</option>
+              <option value="Phòng ban chung">Phòng ban chung</option>
             </select>
 
             <select
@@ -178,8 +261,11 @@ export const TimesheetView: React.FC = () => {
           </div>
         </div>
 
-        <div className="px-5 py-2 bg-slate-50/60 border-b border-slate-100 text-xs text-slate-500">
-          {rows.length} người
+        <div className="px-5 py-2 bg-slate-50/60 border-b border-slate-100 text-xs text-slate-500 flex items-center justify-between">
+          <span>{rows.length} người</span>
+          <span className="text-[11px] text-slate-400">
+            Công chuẩn kỳ {period}: {settings.standardWorkDays || 22} ngày
+          </span>
         </div>
 
         <div className="overflow-x-auto">
@@ -199,8 +285,11 @@ export const TimesheetView: React.FC = () => {
             <tbody className="divide-y divide-slate-100 text-xs">
               {rows.map(({ emp, ts }) => (
                 <tr key={emp.id} className="hover:bg-slate-50/70 transition">
-                  <td className="py-3.5 px-5 font-semibold text-slate-900">
-                    {emp.name}
+                  <td className="py-3.5 px-5">
+                    <div className="font-semibold text-slate-900">{emp.name}</div>
+                    <div className="text-[11px] text-slate-400">
+                      {emp.code} · {emp.department}
+                    </div>
                   </td>
                   <td className="py-3.5 px-3 text-center text-slate-600">
                     {ts.standardDays}
@@ -223,7 +312,12 @@ export const TimesheetView: React.FC = () => {
                   <td className="py-3.5 px-5 text-right">
                     <button
                       onClick={() => toggleConfirmTimesheet(emp.id, period)}
-                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold transition cursor-pointer ${
+                      disabled={isPeriodLocked}
+                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold transition ${
+                        isPeriodLocked
+                          ? 'opacity-70 cursor-not-allowed'
+                          : 'cursor-pointer'
+                      } ${
                         ts.confirmed
                           ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                           : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
@@ -241,3 +335,4 @@ export const TimesheetView: React.FC = () => {
     </div>
   );
 };
+
