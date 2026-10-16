@@ -49,12 +49,18 @@ const MOBILE_EMBED_CODE = `<!DOCTYPE html>
 
 const CREATED_GOOGLE_SITE_EDITOR_URL =
   'https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit';
+const PUBLISHED_GOOGLE_SITE_URL = 'https://sites.google.com/view/phuonghihi-staff';
 
 const SUGGESTED_SLUGS = [
   {
+    slug: 'phuonghihi-staff',
+    label: 'Đường dẫn chính thức: sites.google.com/view/phuonghihi-staff',
+    badge: 'Đang dùng ★',
+  },
+  {
     slug: 'phuonghihi-chamcong',
-    label: 'Trực quan, dễ nhớ nhất cho nhân viên chấm công',
-    badge: 'Khuyên dùng #1',
+    label: 'Trực quan, dễ nhớ cho nhân viên chấm công',
+    badge: 'Gợi ý',
   },
   {
     slug: 'phuonghihi-luong',
@@ -75,11 +81,6 @@ const SUGGESTED_SLUGS = [
     slug: 'phuonghihi-work',
     label: 'Ngắn gọn, hiện đại (Workspace của phuonghihi)',
     badge: 'Hiện đại',
-  },
-  {
-    slug: 'phuonghihi-staff',
-    label: 'Phong cách chuỗi cửa hàng Apple / Retail quốc tế',
-    badge: 'Retail',
   },
 ];
 
@@ -308,15 +309,23 @@ export const GoogleSitesModal: React.FC<GoogleSitesModalProps> = ({ open, onClos
 
           {/* Footer Action */}
           <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <a
-                href={CREATED_GOOGLE_SITE_EDITOR_URL}
+                href={PUBLISHED_GOOGLE_SITE_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs transition"
               >
                 <ExternalLink className="w-4 h-4" />
-                <span>Mở trang Google Sites đã nhúng sẵn &amp; Đổi đuôi URL</span>
+                <span>Mở sites.google.com/view/phuonghihi-staff</span>
+              </a>
+              <a
+                href={CREATED_GOOGLE_SITE_EDITOR_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-semibold transition"
+              >
+                <span>Mở trình sửa Google Sites</span>
               </a>
               <a
                 href="https://sites.google.com/view/phuonghihi"

@@ -6,40 +6,26 @@ Hệ thống Quản trị Nhân sự, Xếp ca thông minh, Chấm công đa ph�
 - **📍 Địa chỉ & Tâm bán kính GPS Chấm công**: `123 Đường Lê Lợi, Quận 1, TP. Hồ Chí Minh` (`10.7728, 106.6988` — bán kính hợp lệ `150m`)
 - **📞 Hotline**: `0900 300 300` | **Giờ mở cửa**: `08:00 - 21:00 (Thứ 2 – Chủ Nhật)`
 - **🌐 Web Bán hàng chính thức**: [https://sites.google.com/view/phuonghihi](https://sites.google.com/view/phuonghihi)
+- **👥 Google Sites Chấm Công & Nhân Sự (`phuonghihi-staff`)**: [https://sites.google.com/view/phuonghihi-staff](https://sites.google.com/view/phuonghihi-staff)
 - **🚀 Live Web Quản trị & Portal Nhân sự**: [https://hienphuong99.github.io/ChamcongvaTinhluong/](https://hienphuong99.github.io/ChamcongvaTinhluong/)
 - **📱 Live Mobile App Chấm Công (PWA)**: [https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile](https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile)
 
 ---
 
-## 🌐 Gắn Lên Google Sites & Gợi Ý Đặt Đuôi URL Đẹp (`sites.google.com/view/...`)
+## 🌐 Đường Dẫn Google Sites Chính Thức (`sites.google.com/view/phuonghihi-staff`)
 
-### Tại sao link nhúng ban đầu có dạng `/d/1Vk57WTh.../edit`?
-- Đường dẫn `https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit` là **link trình chỉnh sửa (Editor)** dành riêng cho chủ sở hữu.
-- Ngay khi bạn bấm nút **Xuất bản (Publish)** màu xanh ở góc trên bên phải của Google Sites, hộp thoại **Địa chỉ web (Web address)** sẽ hiện ra để bạn nhập đuôi rút gọn đẹp chuẩn `https://sites.google.com/view/<tên-đuôi>`.
+Trang Google Sites của hệ thống Chấm công, Xếp ca & Tính lương đã được đặt đuôi chuẩn dễ tìm:
+- **Link chính thức cho nhân viên & quản lý**: **[https://sites.google.com/view/phuonghihi-staff](https://sites.google.com/view/phuonghihi-staff)**
+- **Link trình chỉnh sửa (Editor)**: [https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit)
 
-### 🏆 2 Cách Đặt Đuôi Link Đẹp Nhất Cho `phuonghihi`:
-
-#### Cách A — Gắn thành trang con trực tiếp trên trang `sites.google.com/view/phuonghihi` (Đồng bộ nhất!)
-Không cần tạo thêm site mới, bạn mở ngay trang **phuonghihi** hiện có:
-1. Vào tab **Trang (Pages)** ở cột phải → bấm dấu **`+`** → chọn **Nhúng toàn trang (Full page embed)**.
-2. Đặt tên trang là **`Chấm công`** (hoặc vào *Thuộc tính → Nâng cao → Đường dẫn tùy chỉnh* gõ `cham-cong`).
-3. Chọn **Thêm nội dung nhúng (Add embed)** → dán `https://hienphuong99.github.io/ChamcongvaTinhluong/` → bấm **Xuất bản (Publish)**.
-👉 **Kết quả đường dẫn siêu đẹp, chung 1 hệ sinh thái duy nhất**:
-- `https://sites.google.com/view/phuonghihi/cham-cong` (Trang Quản trị & Chấm công)
-- `https://sites.google.com/view/phuonghihi/app-cham-cong` (Trang App Chấm công Điện thoại `?mode=mobile`)
-
-#### Cách B — Xuất bản trang riêng với tên đuôi `sites.google.com/view/...` gợi ý:
-Khi bấm nút **Xuất bản (Publish)** trên trang [Google Sites đã nhúng sẵn](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit) (hoặc vào **Cài đặt ⚙️ → Đường dẫn đã phát hành**), bạn có thể chọn 1 trong các tên đuôi đẹp sau:
-
-| Tên đuôi nhập vào ô Web Address | Link sau khi Xuất bản | Ý nghĩa & Phong cách |
+| Tên đuôi Web Address | Link xuất bản | Ý nghĩa & Phong cách |
 | :--- | :--- | :--- |
-| **`phuonghihi-chamcong`** | `https://sites.google.com/view/phuonghihi-chamcong` | ⭐ **Khuyên dùng #1**: Rõ ràng, nhân viên cửa hàng nhớ ngay lập tức |
+| **`phuonghihi-staff`** | **`https://sites.google.com/view/phuonghihi-staff`** | ⭐ **Đang sử dụng chính thức**: Phong cách chuỗi cửa hàng Apple / Retail chính hãng |
+| **`phuonghihi-chamcong`** | `https://sites.google.com/view/phuonghihi-chamcong` | Rõ ràng, nhân viên cửa hàng nhớ ngay lập tức |
 | **`phuonghihi-luong`** | `https://sites.google.com/view/phuonghihi-luong` | Chuyên nghiệp chuẩn Hệ thống Chấm công & Tính lương |
 | **`phuonghihi-nhansu`** | `https://sites.google.com/view/phuonghihi-nhansu` | Thuần Việt, thân thiện với toàn bộ đội ngũ bán hàng & kỹ thuật |
 | **`phuonghihi-noibo`** | `https://sites.google.com/view/phuonghihi-noibo` | Phù hợp làm Cổng thông tin nội bộ, Lịch ca & Phiếu lương |
 | **`phuonghihi-work`** | `https://sites.google.com/view/phuonghihi-work` | Ngắn gọn, hiện đại (Workspace nội bộ của phuonghihi) |
-| **`phuonghihi-staff`** | `https://sites.google.com/view/phuonghihi-staff` | Phong cách chuỗi cửa hàng Apple / Retail chính hãng |
-| **`chamcong-phuonghihi`** | `https://sites.google.com/view/chamcong-phuonghihi` | Đặt từ khóa nghiệp vụ lên đầu, dễ tìm kiếm trên trình duyệt |
 
 ---
 
