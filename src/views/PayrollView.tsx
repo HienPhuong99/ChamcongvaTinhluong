@@ -219,7 +219,7 @@ export const PayrollView: React.FC = () => {
   const displayedPayrollRows = showAllRows ? payrollRows : payrollRows.slice(0, 20);
 
   return (
-    <div className="p-6 space-y-5 max-w-[1600px] mx-auto">
+    <div className="p-3.5 sm:p-6 space-y-5 max-w-[1600px] mx-auto">
       {/* Header (Matches 00:48 in video) */}
       <div>
         <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -233,16 +233,16 @@ export const PayrollView: React.FC = () => {
 
       {/* Top Toolbar (Matches 00:48 - 00:51 in video) */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs shrink-0">
             <button
               onClick={() => setPeriod('2026-09')}
               className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800">
-              <Calendar className="w-3.5 h-3.5 text-slate-500" />
+            <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800 whitespace-nowrap">
+              <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
               <span>
                 {period === '2026-09' ? 'Tháng 9/2026' : 'Tháng 10/2026'}
               </span>
@@ -257,7 +257,7 @@ export const PayrollView: React.FC = () => {
 
           <button
             onClick={() => toggleLockPayrollPeriod(period)}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-semibold transition shadow-2xs ${
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition shadow-2xs whitespace-nowrap shrink-0 ${
               periodState.locked
                 ? 'bg-amber-50 border-amber-300 text-amber-800'
                 : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -265,12 +265,12 @@ export const PayrollView: React.FC = () => {
           >
             {periodState.locked ? (
               <>
-                <Unlock className="w-3.5 h-3.5" />
+                <Unlock className="w-3.5 h-3.5 shrink-0" />
                 <span>Mở khoá bảng lương</span>
               </>
             ) : (
               <>
-                <Lock className="w-3.5 h-3.5" />
+                <Lock className="w-3.5 h-3.5 shrink-0" />
                 <span>Khoá bảng lương</span>
               </>
             )}
@@ -280,44 +280,44 @@ export const PayrollView: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setIsCommissionModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-xs font-bold text-indigo-700 shadow-2xs transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-xs font-bold text-indigo-700 shadow-2xs transition cursor-pointer whitespace-nowrap"
           >
-            <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
+            <Smartphone className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
             <span>Tính hoa hồng bán iPhone</span>
           </button>
           <button
             onClick={handleExportVietcombankBatch}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-xs font-bold text-emerald-800 shadow-2xs transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-xs font-bold text-emerald-800 shadow-2xs transition cursor-pointer whitespace-nowrap"
           >
-            <Landmark className="w-3.5 h-3.5 text-emerald-700" />
+            <Landmark className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
             <span>Xuất ủy nhiệm chi Vietcombank</span>
           </button>
           <button
             onClick={handleExportCSV}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs whitespace-nowrap"
           >
-            <Download className="w-3.5 h-3.5 text-slate-500" />
+            <Download className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <span>Xuất CSV</span>
           </button>
           <button
             onClick={handleExportExcel}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs whitespace-nowrap"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
             <span>Xuất Excel</span>
           </button>
           <button
             onClick={() => setActiveTab('settings')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-2xs whitespace-nowrap"
           >
-            <Settings className="w-3.5 h-3.5 text-slate-500" />
+            <Settings className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <span>Cấu hình lương</span>
           </button>
           <button
             onClick={() => calculatePayrollForPeriod(period)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs cursor-pointer whitespace-nowrap"
           >
-            <Calculator className="w-3.5 h-3.5" />
+            <Calculator className="w-3.5 h-3.5 shrink-0" />
             <span>Tính lương</span>
           </button>
         </div>

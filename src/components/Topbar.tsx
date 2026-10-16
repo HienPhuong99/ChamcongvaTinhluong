@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Bell, Smartphone, QrCode, Shield, RotateCcw, Globe } from 'lucide-react';
+import { Search, Bell, Smartphone, QrCode, Shield, RotateCcw, Globe, Menu } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { getInitials } from '../utils/helpers';
 import { GoogleSitesModal } from './GoogleSitesModal';
@@ -9,6 +9,7 @@ export const Topbar: React.FC = () => {
   const {
     activeTab,
     setActiveTab,
+    setIsMobileMenuOpen,
     setIsCommandPaletteOpen,
     setIsDoorQrModalOpen,
     requests,
@@ -25,37 +26,47 @@ export const Topbar: React.FC = () => {
 
   return (
     <>
-      <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0 z-20">
-        {/* Left: Global Search Bar trigger (Ctrl + K) */}
-        <button
-          onClick={() => setIsCommandPaletteOpen(true)}
-          className="w-72 max-w-full flex items-center justify-between px-3.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200/90 text-slate-400 text-sm transition group"
-        >
-          <div className="flex items-center gap-2.5 truncate">
-            <Search className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition" />
-            <span className="truncate text-[13px]">
-              Tìm nhân viên, đơn từ, ca, cài đặt...
-            </span>
-          </div>
-          <kbd className="text-[11px] font-medium text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200 shadow-2xs shrink-0">
-            Ctrl + K
-          </kbd>
-        </button>
+      <header className="h-14 bg-white border-b border-slate-200 px-3 sm:px-5 flex items-center justify-between gap-2 shrink-0 z-20">
+        {/* Left: Mobile Hamburger + Global Search Bar trigger (Ctrl + K) */}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="p-2 rounded-lg text-slate-600 hover:bg-slate-100 lg:hidden shrink-0"
+            title="Mở menu điều hướng"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
 
-        {/* Right: Quick actions, Expo Go, Google Sites, Date, Role Switcher, Notifications, Profile */}
-        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsCommandPaletteOpen(true)}
+            className="w-full max-w-[200px] sm:max-w-[250px] xl:max-w-[290px] flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200/90 text-slate-400 text-sm transition group min-w-0"
+          >
+            <div className="flex items-center gap-2 truncate min-w-0">
+              <Search className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition shrink-0" />
+              <span className="truncate text-xs sm:text-[13px]">
+                Tìm nhân viên, đơn từ, ca...
+              </span>
+            </div>
+            <kbd className="hidden sm:inline-block text-[10.5px] font-medium text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200 shadow-2xs shrink-0 whitespace-nowrap">
+              Ctrl + K
+            </kbd>
+          </button>
+        </div>
+
+        {/* Right: Quick actions, Expo Go, Google Sites, Role Switcher, Notifications, Profile */}
+        <div className="flex items-center gap-1.5 xl:gap-2 shrink-0">
           {/* Open Mobile Check-in App Button */}
           <button
             onClick={() =>
               setActiveTab(activeTab === 'mobile_app' ? 'shifts' : 'mobile_app')
             }
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'mobile_app'
                 ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                 : 'bg-blue-50/80 text-blue-700 border-blue-200 hover:bg-blue-100'
             }`}
           >
-            <Smartphone className="w-3.5 h-3.5" />
+            <Smartphone className="w-3.5 h-3.5 shrink-0" />
             <span>
               {activeTab === 'mobile_app' ? 'Về bản Web' : 'App Mobile'}
             </span>
@@ -64,20 +75,20 @@ export const Topbar: React.FC = () => {
           {/* Expo Go Native QR Button */}
           <button
             onClick={() => setIsExpoGoOpen(true)}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition cursor-pointer"
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition cursor-pointer whitespace-nowrap shrink-0"
             title="Mở mã QR chạy trên ứng dụng Expo Go"
           >
-            <QrCode className="w-3.5 h-3.5 text-slate-800" />
+            <QrCode className="w-3.5 h-3.5 text-slate-800 shrink-0" />
             <span>Expo Go</span>
           </button>
 
           {/* Gắn lên Google Sites Button */}
           <button
             onClick={() => setIsGoogleSitesOpen(true)}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition cursor-pointer"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition cursor-pointer whitespace-nowrap shrink-0"
             title="Lấy link & mã nhúng gắn lên Google Sites phuonghihi"
           >
-            <Globe className="w-3.5 h-3.5 text-emerald-600" />
+            <Globe className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
             <span>Google Sites</span>
           </button>
 
@@ -86,7 +97,7 @@ export const Topbar: React.FC = () => {
             href="https://sites.google.com/view/phuonghihi"
             target="_blank"
             rel="noreferrer"
-            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#0B4174] bg-[#E9F0F8] hover:bg-blue-100 border border-blue-200 transition"
+            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#0B4174] bg-[#E9F0F8] hover:bg-blue-100 border border-blue-200 transition whitespace-nowrap shrink-0"
             title="Mở Web Bán hàng & Kho IMEI phuonghihi (123 Lê Lợi, Q.1)"
           >
             <span>Web Bán hàng</span>
@@ -95,21 +106,21 @@ export const Topbar: React.FC = () => {
           {/* Quick Kiosk QR at door */}
           <button
             onClick={() => setIsDoorQrModalOpen(true)}
-            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 transition cursor-pointer"
+            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 transition cursor-pointer whitespace-nowrap shrink-0"
             title="Mở màn hình Mã QR tại cửa (tự đổi mỗi 45 giây)"
           >
-            <QrCode className="w-3.5 h-3.5 text-blue-600" />
+            <QrCode className="w-3.5 h-3.5 text-blue-600 shrink-0" />
             <span>QR tại cửa</span>
           </button>
 
           {/* Role / Scope Switcher */}
-          <div className="hidden lg:flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-            <Shield className="w-3.5 h-3.5 text-slate-500" />
+          <div className="hidden lg:flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 shrink-0">
+            <Shield className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <select
               aria-label="Chọn tài khoản phân quyền"
               value={currentAccount.id}
               onChange={(e) => switchAccount(e.target.value)}
-              className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer"
+              className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer max-w-[180px] 2xl:max-w-[240px] truncate"
             >
               {accounts.map((acc) => (
                 <option key={acc.id} value={acc.id}>
@@ -123,7 +134,7 @@ export const Topbar: React.FC = () => {
           {/* Notification Bell */}
           <button
             onClick={() => setActiveTab('requests')}
-            className="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
+            className="relative p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition shrink-0"
             title={`${pendingCount} đơn từ đang chờ duyệt`}
           >
             <Bell className="w-4 h-4" />
@@ -138,7 +149,7 @@ export const Topbar: React.FC = () => {
           <button
             onClick={resetDemoData}
             title="Khôi phục dữ liệu mẫu mặc định"
-            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
@@ -146,7 +157,7 @@ export const Topbar: React.FC = () => {
           {/* Profile Pill */}
           <div
             onClick={() => setActiveTab('my_profile')}
-            className="flex items-center gap-2 pl-2 border-l border-slate-200 cursor-pointer"
+            className="flex items-center gap-2 pl-1.5 sm:pl-2 border-l border-slate-200 cursor-pointer shrink-0"
           >
             <div className="w-8 h-8 rounded-full bg-blue-600 text-white font-semibold text-xs flex items-center justify-center">
               {getInitials(currentAccount.name)}

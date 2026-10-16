@@ -84,7 +84,9 @@ interface HRMContextType {
   toasts: ToastMessage[];
   showToast: (title: string, description?: string, type?: ToastMessage['type']) => void;
   dismissToast: (id: string) => void;
-  // Modals
+  // Modals & Responsive Drawer
+  isMobileMenuOpen: boolean;
+  setIsMobileMenuOpen: (open: boolean) => void;
   isCommandPaletteOpen: boolean;
   setIsCommandPaletteOpen: (open: boolean) => void;
   isDoorQrModalOpen: boolean;
@@ -221,6 +223,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Global UI states
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isDoorQrModalOpen, setIsDoorQrModalOpen] = useState(false);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -1171,6 +1174,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toasts,
         showToast,
         dismissToast,
+        isMobileMenuOpen,
+        setIsMobileMenuOpen,
         isCommandPaletteOpen,
         setIsCommandPaletteOpen,
         isDoorQrModalOpen,

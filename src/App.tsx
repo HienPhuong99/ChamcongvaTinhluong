@@ -1,5 +1,15 @@
 import React, { Suspense, lazy } from 'react';
-import { CheckCircle2, Info, AlertTriangle, X } from 'lucide-react';
+import {
+  CheckCircle2,
+  Info,
+  AlertTriangle,
+  X,
+  CalendarClock,
+  UserCheck,
+  Smartphone,
+  FileText,
+  Wallet,
+} from 'lucide-react';
 import { HRMProvider, useHRM } from './context/HRMContext';
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
@@ -35,7 +45,8 @@ const MobileAppView = lazy(() =>
 );
 
 const MainShell: React.FC = () => {
-  const { activeTab, toasts, dismissToast } = useHRM();
+  const { activeTab, setActiveTab, toasts, dismissToast, requests } = useHRM();
+  const pendingCount = requests.filter((r) => r.status === 'Đang chờ').length;
 
   const renderActiveView = () => {
     switch (activeTab) {
@@ -77,7 +88,7 @@ const MainShell: React.FC = () => {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Topbar />
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto pb-16 lg:pb-0">
           <Suspense
             fallback={
               <div className="p-8 flex items-center justify-center text-xs font-semibold text-slate-400">
@@ -88,6 +99,43 @@ const MainShell: React.FC = () => {
             {renderActiveView()}
           </Suspense>
         </main>
+
+        {/* Mobile Quick Bottom Navigation Bar (< 1024px) */}
+        <nav className="lg:hidden h-14 bg-white border-t border-slate-200 px-2 grid grid-cols-5 gap-1 items-center shrink-0 z-20">
+          {[
+            { id: 'shifts' as const, label: 'Ca trực', icon: CalendarClock },
+            { id: 'attendance' as const, label: 'Điểm danh', icon: UserCheck },
+            { id: 'mobile_app' as const, label: 'Chấm công', icon: Smartphone, highlight: true },
+            { id: 'requests' as const, label: 'Đơn từ', icon: FileText, badge: pendingCount },
+            { id: 'payroll' as const, label: 'Bảng lương', icon: Wallet },
+          ].map((item) => {
+            const Icon = item.icon;
+            const active = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`relative flex flex-col items-center justify-center py-1 rounded-xl text-[10.5px] font-semibold transition ${
+                  item.highlight
+                    ? active
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-blue-50 text-blue-700'
+                    : active
+                    ? 'text-blue-600'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span className="mt-0.5 truncate">{item.label}</span>
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span className="absolute top-0.5 right-3 min-w-[14px] h-3.5 px-1 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
       </div>
 
       {/* Global Modals */}
@@ -96,7 +144,7 @@ const MainShell: React.FC = () => {
       <EmployeeProfileModal />
 
       {/* Global Toast Stack */}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+      <div className="fixed bottom-16 lg:bottom-5 right-4 lg:right-5 z-50 flex flex-col gap-2 max-w-sm w-[calc(100vw-2rem)] sm:w-full pointer-events-none">
         {toasts.map((t) => (
           <div
             key={t.id}

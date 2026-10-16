@@ -136,12 +136,15 @@ export function formatVND(amount: number): string {
 }
 
 export function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 0) return 'NV';
+  const cleaned = (name || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^\p{L}\s]/gu, ' ')
+    .trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'PH';
   if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
   const first = parts[0][0] || '';
-  const alphaParts = parts.filter((p) => !/^\d+$/.test(p));
-  const last = alphaParts.length > 1 ? alphaParts[alphaParts.length - 1][0] : parts[parts.length - 1][0];
+  const last = parts[parts.length - 1][0] || '';
   return (first + last).toUpperCase();
 }
 

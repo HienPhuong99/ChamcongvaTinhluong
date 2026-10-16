@@ -148,7 +148,7 @@ export const ShiftScheduleView: React.FC = () => {
   const displayedEmps = showAllRows ? activeEmps : activeEmps.slice(0, 20);
 
   return (
-    <div className="p-6 space-y-5 max-w-[1600px] mx-auto select-none">
+    <div className="p-3.5 sm:p-6 space-y-5 max-w-[1600px] mx-auto select-none">
       {/* Page Header */}
       <div>
         <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">

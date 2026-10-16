@@ -26,6 +26,8 @@ export const MobileAppView: React.FC = () => {
     createRequest,
     computePayrollRows,
     setIsDoorQrModalOpen,
+    setIsMobileMenuOpen,
+    setIsCommandPaletteOpen,
   } = useHRM();
 
   const [selectedEmpId, setSelectedEmpId] = useState<string>('NV0000');
@@ -42,6 +44,7 @@ export const MobileAppView: React.FC = () => {
     | 'Đăng ký tăng ca'
     | 'Bổ sung chấm công'
   >('Nghỉ phép năm');
+  const [reqDate, setReqDate] = useState<string>('10/10/2026');
   const [reqReason, setReqReason] = useState('');
   const [reqTargetShift, setReqTargetShift] = useState<'sang' | 'chieu' | 'hanh_chinh' | 'ca_gay'>('sang');
   const [reqAdvanceAmount, setReqAdvanceAmount] = useState<number>(3000000);
@@ -178,8 +181,8 @@ export const MobileAppView: React.FC = () => {
     createRequest({
       employeeId: currentEmp.id,
       type: reqType,
-      startDate: '10/10/2026',
-      endDate: '10/10/2026',
+      startDate: reqDate || '10/10/2026',
+      endDate: reqDate || '10/10/2026',
       reason: reqReason,
       days: 1,
       otHours: reqType === 'Đăng ký tăng ca' ? 2 : undefined,
@@ -195,22 +198,100 @@ export const MobileAppView: React.FC = () => {
   );
 
   return (
-    <div className="p-4 sm:p-6 flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8 max-w-6xl mx-auto">
-      {/* Left Phone Frame (Exact replica of 00:12 - 00:16 in video) */}
-      <div className="w-full max-w-[390px] bg-white rounded-[38px] shadow-2xl border-[8px] border-slate-900 overflow-hidden flex flex-col shrink-0">
-        {/* Mobile App Top Bar */}
-        <div className="px-4 py-3 bg-white border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-3 text-slate-600">
-            <Menu className="w-5 h-5" />
-            <Search className="w-4 h-4" />
+    <div className="p-2.5 sm:p-6 flex flex-col lg:flex-row items-center lg:items-start justify-center gap-6 lg:gap-8 max-w-6xl mx-auto">
+      {/* Left Phone Frame (Responsive: native card on mobile, iPhone bezel on sm+) */}
+      <div className="w-full max-w-[400px] bg-white rounded-3xl sm:rounded-[38px] shadow-xl sm:shadow-2xl border border-slate-200 sm:border-[8px] sm:border-slate-900 overflow-hidden flex flex-col shrink-0">
+        {/* Mobile App Top Bar (shown inside desktop iPhone frame on sm+) */}
+        <div className="hidden sm:flex px-4 py-3 bg-white border-b border-slate-100 items-center justify-between">
+          <div className="flex items-center gap-2.5 text-slate-600">
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+              title="Mở menu điều hướng"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCommandPaletteOpen(true)}
+              className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+              title="Tìm kiếm nhanh (Ctrl + K)"
+            >
+              <Search className="w-4 h-4" />
+            </button>
           </div>
           <span className="text-xs font-bold text-slate-800">phuonghihi Mobile</span>
-          <div className="flex items-center gap-2.5">
-            <Bell className="w-4 h-4 text-slate-600" />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMobileSubTab('quick_req')}
+              className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+              title="Gửi đơn nhanh"
+            >
+              <Bell className="w-4 h-4 text-slate-600" />
+            </button>
             <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center">
               {getInitials(currentEmp?.name || 'QT')}
             </div>
           </div>
+        </div>
+
+        {/* Inline Quick Switcher for Mobile Users (Employee + GPS Toggle right inside phone) */}
+        <div className="px-3.5 py-2 bg-slate-100/80 border-b border-slate-200/70 flex items-center justify-between gap-2">
+          <select
+            aria-label="Đổi nhân viên trên điện thoại"
+            value={selectedEmpId}
+            onChange={(e) => setSelectedEmpId(e.target.value)}
+            className="flex-1 min-w-0 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-800 truncate"
+          >
+            {scopedEmployees.map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.name} ({emp.code})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() =>
+              setSimulatedOffset((prev) => (prev === 'in_range' ? 'out_of_range' : 'in_range'))
+            }
+            className={`px-2 py-1 rounded-lg text-[10.5px] font-bold border whitespace-nowrap shrink-0 transition ${
+              simulatedOffset === 'in_range'
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                : 'bg-amber-50 border-amber-300 text-amber-800'
+            }`}
+          >
+            {simulatedOffset === 'in_range' ? '📍 Tại quầy (27m)' : '🚶 Ngoài vùng (362m)'}
+          </button>
+        </div>
+
+        {/* Quick 4-Tab Segmented Bar on Mobile (< 640px) so sub-tabs are immediately visible at top */}
+        <div className="grid sm:hidden grid-cols-4 gap-1 p-1.5 bg-white border-b border-slate-100">
+          {[
+            { id: 'checkin', label: 'Chấm công', icon: MapPin },
+            { id: 'my_qr', label: 'Mã QR', icon: QrCode },
+            { id: 'quick_req', label: 'Gửi đơn', icon: FilePlus2 },
+            { id: 'payslip', label: 'Phiếu lương', icon: Wallet },
+          ].map((item) => {
+            const Icon = item.icon;
+            const active = mobileSubTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setMobileSubTab(item.id as typeof mobileSubTab)}
+                className={`flex items-center justify-center gap-1 py-1.5 rounded-xl text-[11px] font-bold transition ${
+                  active
+                    ? 'bg-blue-600 text-white shadow-2xs'
+                    : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{item.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Mobile Screen Content */}
@@ -222,7 +303,7 @@ export const MobileAppView: React.FC = () => {
                 <div className="text-xs text-blue-100 font-medium">
                   Chào buổi chiều,
                 </div>
-                <div className="text-lg font-bold tracking-tight mt-0.5">
+                <div className="text-lg font-bold tracking-tight mt-0.5 truncate">
                   {currentEmp?.name}
                 </div>
 
@@ -234,7 +315,7 @@ export const MobileAppView: React.FC = () => {
                   <div className="text-xl font-extrabold text-slate-900 mt-0.5">
                     Hành chính
                   </div>
-                  <div className="text-xs font-medium text-slate-600 mt-0.5">
+                  <div className="text-xs font-medium text-slate-600 mt-0.5 truncate">
                     08:00 – 17:30 · {settings.officeName}
                   </div>
                 </div>
@@ -352,6 +433,18 @@ export const MobileAppView: React.FC = () => {
                   <option value="Đăng ký tăng ca">⏱️ Đăng ký tăng ca (OT)</option>
                   <option value="Bổ sung chấm công">📝 Bổ sung chấm công</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Ngày áp dụng (DD/MM/YYYY)
+                </label>
+                <input
+                  type="text"
+                  value={reqDate}
+                  onChange={(e) => setReqDate(e.target.value)}
+                  placeholder="10/10/2026"
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50 font-semibold text-slate-800"
+                />
               </div>
               {reqType === 'Đổi ca trực' && (
                 <div>
