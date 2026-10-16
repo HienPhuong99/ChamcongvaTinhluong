@@ -29,22 +29,22 @@ Trang Google Sites của hệ thống Chấm công, Xếp ca & Tính lương đ�
 
 ---
 
-## ✨ Tính Năng Nổi Bật (14 Phân Hệ Hoàn Chỉnh)
+## ✨ Tính Năng Nổi Bật (14 Phân Hệ Hoàn Chỉnh + 6 Nâng Cấp Mới Tháng 10/2026)
 
-- **🗓️ Ca & Lịch làm việc (Bút vẽ xếp ca nhanh)**: Chọn ca trên thanh *Xếp nhanh* (`Hành chính`, `Sáng`, `Chiều`, `Đêm`, `Ca gãy`, `Xoá ca`) rồi bấm hoặc kéo chuột qua các ô để xếp xong lịch cả tuần cho các bộ phận *Tư vấn Bán hàng iPhone*, *Kỹ thuật & Bảo hành Apple*, *Thu ngân & CSKH*, *Kho & Điều vận*.
-- **📱 App Chấm Công Điện Thoại (Mobile PWA & Native Expo Go)**: Đồng hồ số realtime, nút tròn lớn `Chấm công vào / ra`, tích hợp bản đồ **Leaflet OpenStreetMap** đối chiếu bán kính **Cửa hàng phuonghihi — 123 Lê Lợi, Q.1** (`150m`), tạo mã QR cá nhân, gửi đơn từ và xem phiếu lương trên điện thoại.
+- **✨ AI Xếp Ca Tối Ưu 1 Chạm & Tự Tránh Nghỉ Phép (`Mới 10/2026`)**: Bấm 1 nút **`✨ AI Xếp ca tối ưu (Tự tránh phép)`** để tự động phân bổ hơn 310 ca/tuần cho 50 nhân sự, tự động bỏ qua ngày nhân viên có đơn nghỉ phép đã duyệt (`🏖️ Nghỉ phép`) và cảnh báo đỏ `⚠️ Trùng nghỉ phép`.
+- **🔄 Đổi Ca Trực Giữa Nhân Viên (`Mới 10/2026`)**: Nhân viên gửi yêu cầu **`Đổi ca trực`** trên App/Web; ngay khi Quản lý duyệt, bảng phân ca tuần tự động cập nhật ca trực mới.
+- **💸 Ứng Lương Nhanh 24/7 — Earned Wage Access (`Mới 10/2026`)**: Nhân viên tạm ứng linh hoạt tới **30% lương cơ bản** ngay trên App/Web; khi duyệt tự động sinh khoản khấu trừ vào Bước 4 kỳ lương tháng.
+- **📱 Máy Tính Hoa Hồng Bán Lẻ iPhone, AppleCare+ & Trả Góp Theo IMEI (`Mới 10/2026`)**: Tự động tính thưởng doanh số theo đơn giá chuẩn cửa hàng (`150.000đ/máy iPhone`, `200.000đ/gói AppleCare+`, `80.000đ/HS trả góp`) và cộng thẳng vào bảng lương.
+- **🏦 Xuất Ủy Nhiệm Chi Lương Hàng Loạt Chuẩn Vietcombank Digibiz (`Mới 10/2026`)**: Xuất 1 chạm file Excel chuyển khoản lương hàng loạt cho 50 nhân sự.
+- **📸 Chấm Công Selfie Đóng Dấu Watermark GPS + Thời Gian Thực & QR 64-bit (`Mới 10/2026`)**: Đóng dấu tọa độ GPS `123 Lê Lợi, Q.1`, sai số mét và giờ chuẩn lên phiên chấm công kèm mã hóa chữ ký QR Kiosk 64-bit.
+- **🗓️ Ca & Lịch làm việc (Bút vẽ xếp ca nhanh)**: Chọn ca trên thanh *Xếp nhanh* (`Hành chính`, `Sáng`, `Chiều`, `Đêm`, `Ca gãy`, `Xoá ca`) rồi bấm hoặc kéo chuột qua các ô để xếp xong lịch cả tuần.
+- **📱 App Chấm Công Điện Thoại (Mobile PWA & Native Expo Go)**: Đồng hồ số realtime, nút tròn lớn `Chấm công vào / ra`, tích hợp bản đồ **Leaflet OpenStreetMap** đối chiếu bán kính **Cửa hàng phuonghihi — 123 Lê Lợi, Q.1** (`150m`), thanh chọn nhanh NV/GPS và thanh điều hướng đáy 5 mục tối ưu cho màn hình điện thoại.
 - **🏁 Mã QR Tại Quầy Thu Ngân (Tự đổi mỗi 45 giây)**: Màn hình Kiosk iPad hiển thị mã QR động tự làm mới sau mỗi 45 giây chống chụp ảnh gian lận.
 - **🔔 Quản lý Điểm danh & Nhắc chấm công 1 chạm**: Theo dõi tức thì ai đúng giờ, đi muộn, chưa chấm công theo từng khung giờ ca và gửi nhắc nhở cả nhóm chỉ với 1 nút bấm.
 - **📝 Đơn từ & Số dư phép tự tính theo thâm niên**: Duyệt đơn một chạm (`✓` / `✕`), xem lịch nghỉ toàn cửa hàng trên 1 trang lịch tháng, tự động cộng +1 ngày phép cho mỗi 5 năm thâm niên.
 - **👥 Hồ sơ Nhân sự 5 Tab & Checklist Nhận/Trả việc tự động**: Nhập/Xuất danh sách nhân viên từ Excel (`.xlsx`, `.csv`), tự động sinh danh sách công việc khi nhận người mới (Onboarding) hoặc bàn giao nghỉ việc (Offboarding).
-- **💰 Làm lương 5 bước tự động**:
-  1. Tổng hợp bảng công tháng
-  2. Chốt kỳ công
-  3. Khai lương cơ bản & phụ cấp
-  4. Tính bảng lương (tự tính BHXH 10.5%, Thuế TNCN, Tăng ca OT và Khấu trừ đi muộn theo bậc)
-  5. Chốt & Phát hành phiếu lương PDF / gửi Email từng người
-- **🔐 Phân quyền theo bộ phận & Nhật ký hệ thống**: 6 vai trò dựng sẵn, giới hạn dữ liệu theo bộ phận phụ trách, ghi lại toàn bộ lịch sử thao tác.
-- **🔍 Tìm kiếm nhanh `Ctrl + K` không dấu**: Bấm `Ctrl + K` gõ không dấu (`minh anh`, `hai an`) vẫn ra đầy đủ nhân viên, đơn từ, bảng lương.
+- **💰 Làm lương 5 bước tự động**: Tổng hợp bảng công → Chốt kỳ công → Khai lương cơ bản → Tính bảng lương tự động (BHXH 10.5%, Thuế TNCN, OT, Hoa hồng iPhone, Khấu trừ EWA & Phạt muộn) → Xuất ủy nhiệm chi Vietcombank & Phát hành phiếu lương PDF/Email.
+- **🔐 Phân quyền RBAC, Bảo mật Toàn diện (`0` lỗ hổng) & Tìm kiếm `Ctrl + K` không dấu**: Xem chi tiết tại **[`HUONG_DAN_SU_DUNG.md`](./HUONG_DAN_SU_DUNG.md)** và **[`BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md`](./BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md)**.
 
 ---
 

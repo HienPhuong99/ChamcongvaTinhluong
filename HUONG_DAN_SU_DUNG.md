@@ -146,5 +146,76 @@ Chuyển tuần tự qua 5 bước khép kín chỉ trên một màn hình:
 - **Bảo mật toàn diện (Tháng 10/2026)**: Tích hợp chống CSV/Excel Formula Injection (CWE-1236), lọc XSS/HTML Injection (CWE-79), chống Prototype Pollution (CWE-1321), Rate-limiting API 120 req/phút, và `0` lỗ hổng bảo mật (`npm audit`).
 - **Phím tắt Tìm kiếm toàn cục (`Ctrl + K`)**: Bấm `Ctrl + K` ở bất kỳ đâu, gõ tiếng Việt **không dấu** (ví dụ: `minh anh`, `hai an`, `bang luong`, `xep ca`) để nhảy thẳng tới nhân viên hoặc màn hình chức năng.
 - **Khôi phục dữ liệu mẫu**: Bấm biểu tượng vòng xoay `↺` ở góc trên bên phải thanh Topbar bất kỳ lúc nào để đưa dữ liệu về trạng thái chuẩn ban đầu.
-- **Báo cáo Kiểm thử, Đối thủ cạnh tranh & Bảo mật chi tiết**: Xem tại [`BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md`](./BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md).
+
+---
+
+## PHẦN 4: HƯỚNG DẪN THAO TÁC TỪNG BƯỚC CÁC TÍNH NĂNG MỚI NÂNG CẤP (THÁNG 10/2026)
+
+### 4.1. ✨ Cách dùng AI Xếp Ca Tối Ưu 1 Chạm & Tự Động Tránh Ngày Nghỉ Phép
+1. Mở menu **`Ca & lịch làm việc`** (hoặc tab **`Ca trực`** ở thanh đáy trên điện thoại).
+2. Chọn tuần cần xếp lịch (`05/10 - 11/10/2026` hoặc `12/10 - 18/10/2026`).
+3. Bấm nút màu tím xanh **`✨ AI Xếp ca tối ưu (Tự tránh phép)`** ngay đầu bảng phân ca:
+   - Hệ thống tự động quét toàn bộ 50 nhân sự đang làm việc và đơn **Nghỉ phép** đã được duyệt trong tuần.
+   - Tự động bỏ qua không xếp ca vào những ngày nhân viên đang nghỉ phép (hiển thị nhãn xanh `🏖️ Nghỉ phép`).
+   - Tự động cân bằng số lượng nhân viên trực `Ca Sáng`, `Ca Chiều`, `Hành chính` và `Ca gãy (08:00 - 21:00)` cho bộ phận Kinh doanh & Kỹ thuật iPhone.
+4. Nếu bạn dùng bút vẽ tay gán nhầm một ca đè lên ngày nhân viên đã xin nghỉ phép được duyệt, ô đó sẽ lập tức hiện cảnh báo đỏ **`⚠️ Trùng nghỉ phép`** kèm số lượng xung đột trên thanh công cụ để bạn xử lý ngay.
+
+---
+
+### 4.2. 🔄 Cách Gửi & Duyệt Đơn Đổi Ca Trực (`Đổi ca trực` — Tự động cập nhật lịch tuần)
+- **Dành cho Nhân viên (trên App Mobile hoặc Web)**:
+  1. Trên **App Mobile**: Bấm tab **`Gửi đơn`** → chọn Loại đơn **`🔄 Đổi ca trực cửa hàng`** → nhập **`Ngày áp dụng`** → chọn **`Ca muốn đổi sang`** (`Ca Sáng`, `Ca Chiều`, `Hành chính`, `Ca gãy`) → nhập lý do và bấm **`Gửi đơn cho quản lý duyệt`**.
+  2. Trên **Web**: Vào mục **`Đơn từ`** → bấm **`+ Tạo đơn mới`** → chọn **`Đổi ca trực`** → chọn **`Ca muốn đổi sang`** và bấm **`Gửi đơn`**.
+- **Dành cho Quản lý / Nhân sự (HR)**:
+  1. Vào mục **`Đơn từ`** → tab **`Chờ tôi duyệt`**.
+  2. Bấm nút tích xanh **`✓`** ở dòng đơn **`Đổi ca trực`**.
+  3. Hệ thống **tự động đổi luôn ca làm việc của nhân viên đó trên Bảng phân ca tuần** mà không cần mở lại bảng lịch sửa tay.
+
+---
+
+### 4.3. 💸 Cách Ứng Lương Nhanh 24/7 (`Ứng lương nhanh` EWA — Tự động khấu trừ vào Kỳ lương)
+- **Cách 1 (Từ Phiếu lương trên Điện thoại)**:
+  1. Mở **`App Mobile`** → bấm tab **`Phiếu lương`**.
+  2. Bấm nút màu xanh lá **`💸 Ứng lương nhanh 24/7 (Tới 30% lương)`** ở cuối phiếu lương.
+  3. Hệ thống tự động chuyển sang biểu mẫu ứng lương, điền sẵn mức ứng gợi ý và lý do → bấm **`Gửi đơn cho quản lý duyệt`**.
+- **Cách 2 (Tạo trực tiếp tại mục Đơn từ)**:
+  1. Vào **`Đơn từ`** → bấm **`+ Tạo đơn mới`** → chọn loại đơn **`Ứng lương nhanh`**.
+  2. Nhập **`Số tiền tạm ứng (VNĐ)`** (hỗ trợ từ `500.000đ` đến tối đa `30%` lương cơ bản) → bấm **`Gửi đơn`**.
+- **Tự động đối trừ khi Duyệt**:
+  - Ngay khi Quản lý hoặc Kế toán bấm **`✓ Duyệt`** đơn ứng lương, hệ thống tự động tạo một khoản khấu trừ mang tên **`Tạm ứng lương nhanh qua App`** vào **Bước 4** của kỳ lương tháng đó để cuối tháng tự động cấn trừ chính xác 100%.
+
+---
+
+### 4.4. 📱 Cách Tính Hoa Hồng Bán Lẻ iPhone, AppleCare+ & Hồ Sơ Trả Góp Theo IMEI
+1. Vào phân hệ **`Bảng lương`** → chọn kỳ lương (ví dụ `Tháng 9/2026` hoặc `Tháng 10/2026`).
+2. Bấm nút **`📱 Tính hoa hồng bán iPhone`** trên thanh công cụ phía trên.
+3. Trong cửa sổ **Tính hoa hồng bán lẻ iPhone & IMEI**, nhập sản lượng thực tế của từng nhân viên Kinh doanh / Kỹ thuật:
+   - **Máy iPhone bán ra**: Tự nhân đơn giá **`150.000 đ / máy`**.
+   - **Gói bảo hành AppleCare+**: Tự nhân đơn giá **`200.000 đ / gói`**.
+   - **Hồ sơ trả góp duyệt thành công**: Tự nhân đơn giá **`80.000 đ / hồ sơ`**.
+4. Xem cột **Thành tiền hoa hồng** nhảy số trực tiếp và bấm **`Áp dụng hoa hồng vào Bảng lương`**:
+   - Toàn bộ tiền thưởng hoa hồng được cộng tự động vào **Bước 4 (Tính bảng lương)** và hiển thị chi tiết trên Phiếu lương của từng nhân viên.
+
+---
+
+### 4.5. 🏦 Cách Xuất File Ủy Nhiệm Chi Lương Hàng Loạt Chuẩn Vietcombank Digibiz (`.xlsx`)
+1. Vào phân hệ **`Bảng lương`**.
+2. Bấm nút màu xanh lá **`🏦 Xuất ủy nhiệm chi Vietcombank`** trên thanh công cụ.
+3. Trình duyệt sẽ tải ngay về máy file Excel **`Vietcombank_ChuyenKhoanLuong_phuonghihi_<Kỳ>.xlsx`** gồm đầy đủ 7 cột chuẩn ngân hàng:
+   - `STT`, `Mã NV`, `Chủ tài khoản thụ hưởng (IN HOA)`, `Số tài khoản nhận`, `Ngân hàng thụ hưởng (Vietcombank)`, `Số tiền chuyển khoản (Thực lĩnh VNĐ)`, và `Nội dung chuyển khoản`.
+4. Kế toán chỉ cần tải file này lên hệ thống **VCB Digibiz** để duyệt lệnh chi lương hàng loạt cho 50 nhân sự trong 1 lần.
+
+---
+
+### 4.6. 📸 Chấm Công Selfie Đóng Dấu Watermark GPS + Thời Gian Thực & Điều Hướng Giao Diện Mobile Mới
+1. **Đóng dấu Watermark chống gian lận trên App Mobile**:
+   - Ngay dưới nút tròn **`Chấm công vào / ra`** trên `App Mobile`, dải băng đen hiển thị trực tiếp chữ ký số: **`📸 <Mã NV> · 123 Lê Lợi, Q.1 | GPS ±12m · <Giờ:Phút:Giây>`**.
+   - Khi nhân viên bấm chấm công, toàn bộ thông tin Watermark (tọa độ, khoảng cách mét so với quầy 123 Lê Lợi và thời gian chuẩn) được lưu cứng vào lịch sử điểm danh.
+2. **Thao tác nhanh trên màn hình Điện thoại (`390×844` / `?mode=mobile`)**:
+   - **Thanh chọn nhanh trên đầu màn hình điện thoại**: Bạn có thể đổi nhanh nhân viên đang cầm máy và bấm nút **`📍 Tại quầy (27m)` / `🚶 Ngoài vùng (362m)`** ngay trên đầu màn hình điện thoại mà không cần cuộn xuống dưới.
+   - **4 nút chuyển nhanh (`Chấm công` · `Mã QR` · `Gửi đơn` · `Phiếu lương`)**: Nằm ngay đầu màn hình Mobile giúp chuyển tác vụ tức thì.
+   - **Menu ngăn kéo trượt (`☰`) & Thanh điều hướng đáy 5 mục**: Khi dùng trình duyệt điện thoại, bấm nút **`☰`** góc trên bên trái để mở toàn bộ 14 phân hệ hoặc dùng 5 nút cố định dưới đáy màn hình (`Ca trực`, `Điểm danh`, `Chấm công`, `Đơn từ`, `Bảng lương`).
+
+> 📄 **Xem thêm Báo cáo Kiểm thử Đa nền tảng, Phân tích Đối thủ & Kiểm toán Bảo mật chi tiết tại**: [`BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md`](./BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md).
+
 
