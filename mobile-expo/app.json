@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "phuonghihi — Chấm Công",
+    "slug": "phuonghihi-chamcong",
+    "version": "1.0.0",
+    "scheme": "phuonghihi",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.phuonghihi.chamcong"
+    },
+    "android": {
+      "package": "com.phuonghihi.chamcong",
+      "adaptiveIcon": {
+        "backgroundColor": "#FFF1EA",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
