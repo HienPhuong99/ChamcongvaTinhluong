@@ -124,6 +124,37 @@ function getConfiguredApiSecret() {
   return PropertiesService.getScriptProperties().getProperty('PHUONGHIHI_API_SECRET');
 }
 
+function stripSensitiveSettings(settings) {
+  if (!settings || typeof settings !== 'object') return settings;
+  const copy = JSON.parse(JSON.stringify(settings));
+  delete copy.apiSecretToken;
+  delete copy.token;
+  delete copy.pin;
+  return copy;
+}
+
+function getQrHmacSecret() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty('PHUONGHIHI_QR_SECRET');
+  if (!secret) {
+    secret = getConfiguredApiSecret() || Utilities.getUuid() + '-' + Utilities.getUuid();
+    props.setProperty('PHUONGHIHI_QR_SECRET', secret);
+  }
+  return secret;
+}
+
+function computeQrHmacHex(message) {
+  const sig = Utilities.computeHmacSha256Signature(message, getQrHmacSecret());
+  return sig
+    .map(function (b) {
+      const v = (b < 0 ? b + 256 : b).toString(16);
+      return v.length === 1 ? '0' + v : v;
+    })
+    .join('')
+    .toUpperCase()
+    .slice(0, 16);
+}
+
 /**
  * Web App POST Endpoint: Nhận dữ liệu đồng bộ từ Web/App hoặc gửi Email phiếu lương
  */
@@ -135,12 +166,93 @@ function doPost(e) {
     }
     const payload = JSON.parse(rawContents);
     const configuredSecret = getConfiguredApiSecret();
-    if (!configuredSecret || !payload.token || payload.token !== configuredSecret) {
-      return jsonResponse({ ok: false, error: 'Unauthorized: invalid or unconfigured API token' });
+    const isAttendanceOrQr =
+      payload.action === 'UPSERT_ATTENDANCE' ||
+      payload.action === 'GENERATE_QR' ||
+      payload.action === 'VERIFY_QR';
+
+    if (!isAttendanceOrQr) {
+      if (!configuredSecret || !payload.token || payload.token !== configuredSecret) {
+        return jsonResponse({ ok: false, error: 'Unauthorized: invalid or unconfigured API token' });
+      }
     }
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-    if (payload.action === 'SYNC_FULL_STATE' || payload.action === 'syncAll') {
+    if (payload.action === 'GENERATE_QR') {
+      const mode = payload.mode === 'PRINTED' ? 'PRINTED' : payload.mode === 'PERSONAL' ? 'PERSONAL' : '45S';
+      if (mode === 'PERSONAL') {
+        const empCode = String(payload.employeeCode || '').trim().toUpperCase();
+        const dayStr = Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'yyyyMMdd');
+        const msg = 'PHUONGHIHI-EMP|' + empCode + '|' + dayStr;
+        const sig = computeQrHmacHex(msg);
+        return jsonResponse({ ok: true, payload: msg + '|' + sig });
+      }
+      const slot = mode === 'PRINTED'
+        ? Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'yyyyMMdd')
+        : String(Math.floor(Date.now() / 45000));
+      const msg = 'PHUONGHIHI-DOOR|' + mode + '|' + slot;
+      const sig = computeQrHmacHex(msg);
+      return jsonResponse({ ok: true, payload: msg + '|' + sig, mode: mode, slot: slot });
+    }
+
+    if (payload.action === 'VERIFY_QR') {
+      const raw = String(payload.payload || '').trim().toUpperCase();
+      const parts = raw.split('|');
+      if (parts.length === 4 && parts[0] === 'PHUONGHIHI-DOOR') {
+        const mode = parts[1];
+        const slotStr = parts[2];
+        const providedSig = parts[3];
+        const expectedSig = computeQrHmacHex('PHUONGHIHI-DOOR|' + mode + '|' + slotStr);
+        if (providedSig !== expectedSig) {
+          return jsonResponse({ ok: true, valid: false, reason: 'Chữ ký mã QR tại cửa không khớp' });
+        }
+        return jsonResponse({ ok: true, valid: true, type: mode === 'PRINTED' ? 'DOOR_PRINTED' : 'DOOR_45S' });
+      }
+      return jsonResponse({ ok: true, valid: false, reason: 'Định dạng QR không hợp lệ' });
+    }
+
+    if (payload.action === 'UPSERT_ATTENDANCE' && payload.record && payload.record.id) {
+      const attSheet = ss.getSheetByName(SHEET_NAMES.ATTENDANCE);
+      if (attSheet) {
+        const r = payload.record;
+        const rowData = [
+          sanitizeSheetCell(r.id),
+          sanitizeSheetCell(r.employeeId),
+          sanitizeSheetCell(r.date),
+          sanitizeSheetCell(r.shiftCode || ''),
+          sanitizeSheetCell(r.checkIn || ''),
+          sanitizeSheetCell(r.checkOut || ''),
+          sanitizeSheetCell(r.status),
+          Number(r.lateMinutes) || 0,
+          Number(r.otHours) || 0,
+          sanitizeSheetCell(r.method || ''),
+          Number(r.distanceMeters) || 0,
+          sanitizeSheetCell(r.note || ''),
+        ];
+        const lastRow = attSheet.getLastRow();
+        let updated = false;
+        if (lastRow > 1) {
+          const ids = attSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+          for (let i = 0; i < ids.length; i++) {
+            if (String(ids[i][0]) === String(r.id)) {
+              attSheet.getRange(i + 2, 1, 1, 12).setValues([rowData]);
+              updated = true;
+              break;
+            }
+          }
+        }
+        if (!updated) {
+          attSheet.appendRow(rowData);
+        }
+      }
+      return jsonResponse({ ok: true, updatedAt: new Date().toISOString() });
+    }
+
+    if (
+      payload.action === 'UPSERT_STATE' ||
+      payload.action === 'SYNC_FULL_STATE' ||
+      payload.action === 'syncAll'
+    ) {
       const stateData = payload.state && typeof payload.state === 'object' ? payload.state : payload;
 
       // 1. Đồng bộ bảng Nhân viên
@@ -171,29 +283,42 @@ function doPost(e) {
         }
       }
 
-      // 2. Đồng bộ bảng Điểm danh
+      // 2. Đồng bộ bảng Điểm danh (Upsert theo ID thay vì xóa trắng)
       if (Array.isArray(stateData.attendanceRecords)) {
         const attSheet = ss.getSheetByName(SHEET_NAMES.ATTENDANCE);
         if (attSheet) {
-          if (attSheet.getLastRow() > 1) {
-            attSheet.getRange(2, 1, attSheet.getLastRow() - 1, 12).clearContent();
+          const existingMap = {};
+          const lastRow = attSheet.getLastRow();
+          if (lastRow > 1) {
+            const existingRows = attSheet.getRange(2, 1, lastRow - 1, 12).getValues();
+            existingRows.forEach(function (row) {
+              if (row[0]) existingMap[String(row[0])] = row;
+            });
           }
-          const rows = stateData.attendanceRecords.slice(0, 1000).map((r) => [
-            sanitizeSheetCell(r.id),
-            sanitizeSheetCell(r.employeeId),
-            sanitizeSheetCell(r.date),
-            sanitizeSheetCell(r.shiftCode || ''),
-            sanitizeSheetCell(r.checkIn || ''),
-            sanitizeSheetCell(r.checkOut || ''),
-            sanitizeSheetCell(r.status),
-            Number(r.lateMinutes) || 0,
-            Number(r.otHours) || 0,
-            sanitizeSheetCell(r.method || ''),
-            Number(r.distanceMeters) || 0,
-            sanitizeSheetCell(r.note || ''),
-          ]);
-          if (rows.length > 0) {
-            attSheet.getRange(2, 1, rows.length, 12).setValues(rows);
+          stateData.attendanceRecords.slice(0, 1000).forEach(function (r) {
+            existingMap[String(r.id)] = [
+              sanitizeSheetCell(r.id),
+              sanitizeSheetCell(r.employeeId),
+              sanitizeSheetCell(r.date),
+              sanitizeSheetCell(r.shiftCode || ''),
+              sanitizeSheetCell(r.checkIn || ''),
+              sanitizeSheetCell(r.checkOut || ''),
+              sanitizeSheetCell(r.status),
+              Number(r.lateMinutes) || 0,
+              Number(r.otHours) || 0,
+              sanitizeSheetCell(r.method || ''),
+              Number(r.distanceMeters) || 0,
+              sanitizeSheetCell(r.note || ''),
+            ];
+          });
+          const mergedRows = Object.keys(existingMap).map(function (k) {
+            return existingMap[k];
+          });
+          if (lastRow > 1) {
+            attSheet.getRange(2, 1, lastRow - 1, 12).clearContent();
+          }
+          if (mergedRows.length > 0) {
+            attSheet.getRange(2, 1, mergedRows.length, 12).setValues(mergedRows);
           }
         }
       }
@@ -221,16 +346,18 @@ function doPost(e) {
         }
       }
 
-      // 4. Ghi trạng thái đồng bộ vào CaiDat
+      // 4. Ghi trạng thái đồng bộ vào CaiDat (đã loại bỏ apiSecretToken và PIN)
       const settingsSheet = ss.getSheetByName(SHEET_NAMES.SETTINGS);
       if (settingsSheet) {
+        const safeSettings = stripSensitiveSettings(stateData.settings);
         settingsSheet.appendRow([
-          sanitizeSheetCell('LAST_FULL_SYNC'),
+          sanitizeSheetCell('LAST_UPSERT_SYNC'),
           sanitizeSheetCell(JSON.stringify({
             exportedAt: stateData.exportedAt || new Date().toISOString(),
             employeeCount: Array.isArray(stateData.employees) ? stateData.employees.length : 0,
             attendanceCount: Array.isArray(stateData.attendanceRecords) ? stateData.attendanceRecords.length : 0,
             requestCount: Array.isArray(stateData.requests) ? stateData.requests.length : 0,
+            settings: safeSettings,
           })),
           sanitizeSheetCell(new Date().toLocaleString('vi-VN')),
         ]);

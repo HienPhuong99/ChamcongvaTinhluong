@@ -581,13 +581,20 @@ export function buildInitialTimesheets(): MonthlyTimesheetRow[] {
             r.startDate.endsWith('/10/2026')
         );
         const paidLeaveDays = approvedLeaves.reduce((s, r) => s + (r.days || 1), 0);
+        const pastScheduledShifts = INITIAL_SHIFT_ASSIGNMENTS.filter(
+          (a) =>
+            a.employeeId === emp.id &&
+            a.date.startsWith('2026-10') &&
+            a.date <= '2026-10-16'
+        ).length;
+        const absentDays = Math.max(0, pastScheduledShifts - periodAtt.length - paidLeaveDays);
         rows.push({
           employeeId: emp.id,
           period,
           standardDays: 22,
           actualDays,
           paidLeaveDays,
-          absentDays: 0,
+          absentDays,
           lateCount: lateRecs.length,
           lateMinutes,
           otHours,
@@ -689,6 +696,7 @@ export const INITIAL_SETTINGS: SystemSettings = {
   allowedRadiusMeters: 150,
   autoProcessLate: true,
   graceLateCountPerMonth: 1,
+  graceLateMinutes: 5,
   lateTiers: [
     { id: 'TIER-1', fromMinutes: 1, toMinutes: 15, action: 'Nhắc nhở', value: 0 },
     { id: 'TIER-2', fromMinutes: 16, toMinutes: 30, action: 'Trừ tiền', value: 50000 },
@@ -699,15 +707,17 @@ export const INITIAL_SETTINGS: SystemSettings = {
   allowLateCheckOutMinutes: 120,
   otMultiplierWeekday: 1.5,
   otMultiplierWeekend: 2.0,
+  demoGpsSimulationEnabled: false,
   standardWorkDays: 22,
   insuranceRateEmployee: 10.5,
   maxInsuranceSalary: 46800000,
-  personalTaxDeduction: 11000000,
-  dependentTaxDeduction: 4400000,
+  personalTaxDeduction: 15500000,
+  dependentTaxDeduction: 6200000,
   autoSendPayslipEmail: true,
   biometricDeviceName: 'ZKTeco SenseFace 4A (Quầy thu ngân 123 Lê Lợi)',
   biometricDeviceIp: '192.168.1.201:4370',
   googleSheetsWebAppUrl: '',
+  backendApiUrl: '',
   autoSyncGoogleSheets: false,
 };
 

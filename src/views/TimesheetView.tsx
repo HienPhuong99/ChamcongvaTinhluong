@@ -11,11 +11,10 @@ import {
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import {
-  calculateInclusiveDays,
   canManagePayroll,
   canManageSchedules,
-  derivePeriodFromDate,
   exportToCSV,
+  getCurrentMonthPeriod,
   matchesSearch,
 } from '../utils/helpers';
 
@@ -36,19 +35,17 @@ export const TimesheetView: React.FC = () => {
   const {
     scopedEmployees,
     timesheets,
-    attendanceRecords,
-    requests,
-    shiftTemplates,
     payrollPeriods,
-    settings,
     currentAccount,
+    settings,
+    computeEmployeeTimesheetRow,
     aggregateTimesheet,
     toggleConfirmTimesheet,
     lockTimesheetPeriod,
     unlockTimesheetPeriod,
   } = useHRM();
 
-  const [period, setPeriod] = useState<string>('2026-10');
+  const [period, setPeriod] = useState<string>(() => getCurrentMonthPeriod());
   const [searchQuery, setSearchQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState('ALL');
   const [confirmFilter, setConfirmFilter] = useState<'ALL' | 'CONFIRMED' | 'PENDING'>('ALL');
@@ -63,68 +60,13 @@ export const TimesheetView: React.FC = () => {
   );
 
   const rows = useMemo(() => {
-    const standardDays = settings.standardWorkDays || 22;
     return scopedEmployees
       .filter((e) => e.status !== 'Đã nghỉ')
       .map((emp) => {
         const existingTs = timesheets.find(
           (t) => t.employeeId === emp.id && t.period === period
         );
-        const periodAtt = attendanceRecords.filter(
-          (r) => r.employeeId === emp.id && r.date.startsWith(period)
-        );
-        const checkedIn = periodAtt.filter((r) => Boolean(r.checkIn));
-
-        let ts = existingTs;
-        if (!ts || periodAtt.length > 0) {
-          const actualDays = checkedIn.reduce((sum, r) => {
-            const tpl = shiftTemplates.find((s) => s.code === r.shiftCode);
-            return sum + (tpl ? tpl.workDays : 1);
-          }, 0);
-          const absentDays = periodAtt.filter(
-            (r) => !r.checkIn && r.status === 'Vắng'
-          ).length;
-          const lateRecs = checkedIn.filter((r) => r.lateMinutes > 0);
-          const lateMinutes = lateRecs.reduce((s, r) => s + r.lateMinutes, 0);
-          const liveOt = checkedIn.reduce((s, r) => s + (r.otHours || 0), 0);
-
-          const approvedLeaves = requests.filter(
-            (r) =>
-              r.employeeId === emp.id &&
-              r.status === 'Đã duyệt' &&
-              (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm') &&
-              derivePeriodFromDate(r.startDate, period) === period
-          );
-          const paidLeaveDays = approvedLeaves.reduce(
-            (s, r) => s + (r.days || calculateInclusiveDays(r.startDate, r.endDate)),
-            0
-          );
-
-          const approvedOtReqs = requests.filter(
-            (r) =>
-              r.employeeId === emp.id &&
-              r.status === 'Đã duyệt' &&
-              r.type === 'Đăng ký tăng ca' &&
-              derivePeriodFromDate(r.startDate, period) === period
-          );
-          const approvedOtHours = approvedOtReqs.reduce(
-            (s, r) => s + (r.otHours || 0),
-            0
-          );
-
-          ts = {
-            employeeId: emp.id,
-            period,
-            standardDays,
-            actualDays,
-            paidLeaveDays,
-            absentDays,
-            lateCount: lateRecs.length,
-            lateMinutes,
-            otHours: Math.max(liveOt, approvedOtHours),
-            confirmed: existingTs?.confirmed ?? false,
-          };
-        }
+        const ts = computeEmployeeTimesheetRow(emp.id, period, existingTs);
         return { emp, ts };
       })
       .filter(({ emp, ts }) => {
@@ -143,14 +85,11 @@ export const TimesheetView: React.FC = () => {
   }, [
     scopedEmployees,
     timesheets,
-    attendanceRecords,
-    requests,
-    shiftTemplates,
+    computeEmployeeTimesheetRow,
     period,
     deptFilter,
     confirmFilter,
     searchQuery,
-    settings.standardWorkDays,
   ]);
 
   const handleExportCSV = () => {

@@ -35,7 +35,10 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 
 ## PHẦN 2: THÔNG TIN TÀI KHOẢN ĐĂNG NHẬP & CHUYỂN ĐỔI VAI TRÒ (RBAC)
 
-Để bảo mật phân quyền thực tế, hệ thống tích hợp **Bộ chuyển đổi tài khoản có xác thực mã PIN/Mật khẩu** nằm ngay góc trên bên phải thanh công cụ (mã PIN mặc định hệ thống: `123456`).
+Để bảo mật phân quyền thực tế, hệ thống tích hợp **Bộ chuyển đổi tài khoản có xác thực mã PIN băm (Hash PBKDF2-SHA256)** nằm ở góc trên bên phải thanh công cụ:
+- **Không dùng mã PIN mặc định chung và không chấp nhận tên đăng nhập (`@admin`, v.v.) làm mật khẩu**.
+- **Thiết lập PIN ở lần đầu đăng nhập**: Khi chuyển sang một tài khoản chưa đặt mã PIN trên thiết bị, hệ thống yêu cầu tạo mã PIN mới (tối thiểu 6 ký tự, nhập 2 lần xác nhận). Mã PIN chỉ được lưu dưới dạng băm (`pinHash`) riêng trên thiết bị và tuyệt đối không đồng bộ dạng rõ qua mạng.
+- **Tự động bảo vệ khi khoá tài khoản**: Khi một tài khoản bị Quản trị viên khoá hoặc khi người dùng bấm Đăng xuất, hệ thống lập tức chuyển về màn hình chọn tài khoản đăng nhập (không tự động rơi sang tài khoản của nhân viên khác).
 
 ### 2.1. Danh sách 6 Tài khoản Phân quyền Dựng sẵn trên Web & Mobile
 
@@ -53,7 +56,7 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 - **Email chuẩn**: `<mã_nv_viết_thường>@phuonghihi.vn` (Ví dụ: `nv0001@phuonghihi.vn`, `nv0002@phuonghihi.vn`, ..., `nv0050@phuonghihi.vn`).
 - **Số điện thoại**: `0900300000` → `0900300050`.
 - **Cách đổi nhân viên đang thao tác trên App Điện Thoại**:
-  - Trên **Web Mobile PWA** (`?mode=mobile`): Chọn nhân viên ở thanh **Đang chấm công với tư cách** ngay đầu màn hình điện thoại.
+  - Trên **Web Mobile PWA** (`?mode=mobile`): Chọn nhân viên ở thanh **Đang chấm công với tư cách** ngay đầu màn hình điện thoại (chỉ hiển thị cho Quản lý khi có nhiều nhân sự trong phạm vi phân quyền).
   - Trên **App Native Expo Go**: Bấm vào thẻ tên nhân viên ở góc trên cùng bên phải màn hình để chuyển nhanh giữa các nhân viên (`NV0000`, `NV0001`, `NV0002`, `NV0003`, `NV0009`, ...).
 
 ### 2.3. Tài khoản Admin sở hữu Google Sites, File gốc Excel / Google Sheets & Script liên quan
@@ -62,7 +65,7 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 - **Tài khoản Admin trên phần mềm (`super_admin`)**: `ACC-001` — **Quản lý cửa hàng (phuonghihi)** (`@admin` / `admin@phuonghihi.vn`) — nắm toàn quyền quản trị dữ liệu gốc, nhập/xuất file Excel (`.xlsx`, `.csv`), chốt bảng công, bảng lương và cấu hình kết nối Google Sheets.
 - **Script Google Sheets & Apps Script gốc**: Lưu tại [`google-sheets/Code.gs`](./google-sheets/Code.gs)
   - Chứa hàm `setupPhuonghihiDatabase()` tự động khởi tạo **8 trang tính (Sheets) chuẩn**: `NhanVien`, `PhanCa`, `DiemDanh`, `DonTu`, `BangCong`, `BangLuong`, `CaiDat`, `NhatKyHeThong`.
-  - Chứa các endpoint `doGet` và `doPost` để đồng bộ dữ liệu 2 chiều và tự động gửi email phiếu lương.
+  - Chứa các endpoint `doGet` và `doPost` để đồng bộ dữ liệu 2 chiều theo cơ chế **Upsert theo ID** (không ghi đè mất dữ liệu của máy khác), ký/xác thực mã QR tập trung tại Server và tự động gửi email phiếu lương.
   - **Cấu hình URL Web App Apps Script riêng cho HRM**: Triển khai [`google-sheets/Code.gs`](./google-sheets/Code.gs) thành một Web App độc lập trên Google Sheets HRM (tách biệt với script của Web Bán hàng) và dán URL `/exec` vào mục **Cài đặt → Tính lương & Sheets**.
 - **Dữ liệu gốc (Seed Data 50 nhân sự, bảng công, bảng lương)**: Lưu tại [`src/data/seedData.ts`](./src/data/seedData.ts). Admin (`@admin`), Nhân sự (`@minhanh.hr`) và Kế toán (`@ngoclan.kt`) có thể **Xuất ra file Excel (`.xlsx` / `.csv`)** hoặc **Nhập từ file Excel** trực tiếp tại phân hệ **Nhân viên** và **Báo cáo**.
 
@@ -87,19 +90,20 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 
 ### 2️⃣ Chấm công Điện thoại, Watermark GPS & Bản đồ Leaflet (`App Mobile` / `?mode=mobile`)
 - **3 Phương thức chấm công**:
-  1. **Tại văn phòng (GPS + Bán kính 150m)**: Hệ thống định vị trực tiếp trên bản đồ **Leaflet OpenStreetMap** lấy tâm là **Cửa hàng phuonghihi — 123 Đường Lê Lợi, Quận 1** (`10.7728, 106.6988`). Bạn có thể bật/tắt nút mô phỏng *"Đứng trong cửa hàng (32m)"* hoặc *"Đứng ngoài bán kính (420m)"* để kiểm thử chặn chấm công sai vị trí.
-  2. **Quét mã QR tại quầy (Xác thực Token 64-bit)**: Nhân viên mở tab **Mã QR của tôi** hoặc quét mã QR động 45 giây hiển thị trên iPad tại quầy thu ngân.
+  1. **Tại văn phòng (GPS thực tế + Bán kính 150m)**: Hệ thống lấy tọa độ GPS thực của thiết bị qua `navigator.geolocation` và đối chiếu khoảng cách trên bản đồ **Leaflet OpenStreetMap** lấy tâm là **Cửa hàng phuonghihi — 123 Đường Lê Lợi, Quận 1** (`10.7728, 106.6988`). Nếu thiết bị từ chối cấp quyền vị trí GPS thì không thể bấm chấm công GPS. (Quản trị viên có thể bật tuỳ chọn *Chế độ Demo mô phỏng vị trí GPS* trong **Cài đặt** nếu muốn kiểm thử nhanh).
+  2. **Quét mã QR tại quầy (Ký & xác thực HMAC-SHA256 tại Server)**: Nhân viên mở tab **Mã QR của tôi** trên điện thoại và quét/nhập mã QR động 45 giây hiển thị trên màn hình iPad Kiosk tại quầy thu ngân.
   3. **Làm việc từ xa (Remote / Đi thị trường)**: Dành cho nhân sự được bật cờ *Cho phép chấm công từ xa*, yêu cầu nhập lý do/địa điểm khách hàng trước khi bấm **Chấm công vào**.
-- **📸 Chụp ảnh Selfie kèm Watermark Thời gian & Tọa độ GPS thực**:
-  - Hỗ trợ bật/tắt xác thực ảnh Selfie có đóng dấu trực tiếp tên nhân viên, mã NV, giờ chấm công và tọa độ GPS `10.7728, 106.6988` để chống chấm công hộ tuyệt đối.
+- **📸 Chụp ảnh Selfie bằng Camera thật & Tự động nén ảnh tối ưu**:
+  - Khi bật yêu cầu chụp ảnh khi chấm công GPS, nhân viên bắt buộc chụp ảnh từ Camera trước (`capture="user"`) hoặc chọn file ảnh thực tế kèm đóng dấu Watermark tên nhân viên, mã NV, giờ chấm công và tọa độ GPS.
+  - Ảnh chụp (kể cả ảnh gốc nặng 4MB–10MB) được tự động thu nhỏ và nén chuẩn JPEG (`≤ 480px`, chất lượng `0.6`) giúp lưu trữ mượt mà và đồng bộ tức thì lên Server.
 - **Tính năng ngay trên App Điện thoại (Web PWA & Native Expo Go)**:
   - Bấm nút tròn lớn **Chấm công vào** (`Check-in`) / **Chấm công ra** (`Check-out`).
-  - Gửi nhanh **5 loại đơn từ**: **Nghỉ phép**, **Làm thêm giờ (OT)**, **Quên chấm công**, **🔄 Đổi ca trực**, và **💸 Ứng lương nhanh (tối đa 30% lương tích lũy)**.
+  - Gửi nhanh **5 loại đơn từ**: **Nghỉ phép**, **Làm thêm giờ (OT)**, **Quên chấm công**, **🔄 Đổi ca trực**, và **💸 Ứng lương nhanh (tối đa 30% lương cơ bản đối với nhân sự đã khai lương)**.
   - Xem **Phiếu lương cá nhân** và bấm **Phản hồi phiếu lương** nếu có thắc mắc.
 
 ### 3️⃣ Màn hình Kiosk Mã QR tại cửa (`QR tại cửa`)
-- Bấm nút **QR tại cửa** trên thanh Topbar (hoặc chuyển sang tài khoản `iPad Kiosk Quầy Thu Ngân @kiosk.quay`).
-- Màn hình hiển thị mã QR kích thước lớn kèm đồng hồ đếm ngược **45 giây**. Hết 45 giây mã tự động sinh chuỗi token 64-bit mới (`PH-DOOR-123LL-...`) để chống nhân viên chụp ảnh màn hình gửi cho nhau chấm hộ.
+- Chỉ tài khoản **Màn hình QR tại cửa (`@kiosk.quay`)** hoặc **Quản lý / HR / Admin** mới có nút **QR tại cửa** trên thanh Topbar để mở màn hình Kiosk.
+- Màn hình Kiosk hiển thị mã QR kích thước lớn kèm đồng hồ đếm ngược **45 giây** được ký số từ Server (`/api/qr/token`). Hết 45 giây mã tự động sinh chuỗi token mới để nhân viên dùng điện thoại cá nhân quét chấm công (màn hình Kiosk không cho phép bấm tự chấm công trực tiếp).
 
 ### 4️⃣ Quản lý Điểm danh & Nhắc chấm công 1 chạm (`Điểm danh`)
 - Chọn ngày cần theo dõi (mặc định mở ngày có dữ liệu mẫu đầy đủ `09/10/2026`).

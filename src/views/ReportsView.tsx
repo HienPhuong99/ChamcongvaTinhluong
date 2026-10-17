@@ -12,7 +12,12 @@ import {
   Layers,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
-import { exportToCSV, exportToExcel, formatVND } from '../utils/helpers';
+import {
+  exportToCSV,
+  exportToExcel,
+  formatVND,
+  getPreviousMonthPeriod,
+} from '../utils/helpers';
 
 function shiftPeriodMonth(period: string, delta: number): string {
   const [yStr, mStr] = period.split('-');
@@ -29,7 +34,7 @@ function formatPeriodLabel(period: string): string {
 
 export const ReportsView: React.FC = () => {
   const { scopedEmployees, attendanceRecords, computePayrollRows, showToast } = useHRM();
-  const [period, setPeriod] = useState<string>('2026-09');
+  const [period, setPeriod] = useState<string>(() => getPreviousMonthPeriod());
 
   const payrollRows = useMemo(
     () => computePayrollRows(period),

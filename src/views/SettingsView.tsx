@@ -16,7 +16,11 @@ import {
 import { useHRM } from '../context/HRMContext';
 import { INITIAL_SETTINGS } from '../data/seedData';
 import { LatePenaltyTier, SystemSettings } from '../types';
-import { canManageSettings } from '../utils/helpers';
+import {
+  canManageSettings,
+  getLocalApiSecretToken,
+  setLocalApiSecretToken,
+} from '../utils/helpers';
 
 type SettingsTabId =
   | 'methods'
@@ -40,12 +44,16 @@ export const SettingsView: React.FC = () => {
 
   const [activeSubTab, setActiveSubTab] = useState<SettingsTabId>('late_rules');
   const [draft, setDraft] = useState<SystemSettings>({ ...settings });
+  const [localToken, setLocalToken] = useState<string>(() =>
+    getLocalApiSecretToken()
+  );
   const [isDirty, setIsDirty] = useState(false);
 
   const canEdit = canManageSettings(currentAccount.roleId);
 
   useEffect(() => {
     setDraft({ ...settings });
+    setLocalToken(getLocalApiSecretToken());
     setIsDirty(false);
   }, [settings]);
 
@@ -91,6 +99,7 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleSaveAll = () => {
+    setLocalApiSecretToken(localToken);
     updateSettings(draft);
     setIsDirty(false);
   };
@@ -154,7 +163,7 @@ export const SettingsView: React.FC = () => {
           {
             id: 'checkin_rules' as const,
             title: 'Quy tắc chấm',
-            sub: `Sớm ${draft.allowEarlyCheckInMinutes}p · OT x${draft.otMultiplierWeekday}`,
+            sub: `Sớm ${draft.allowEarlyCheckInMinutes}p · Trễ ${draft.graceLateMinutes ?? 5}p`,
           },
           {
             id: 'biometric' as const,
@@ -214,25 +223,45 @@ export const SettingsView: React.FC = () => {
               />
             </div>
             {draft.gpsEnabled && (
-              <label className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={draft.requirePhotoOnGps}
-                  onChange={(e) =>
-                    updateField('requirePhotoOnGps', e.target.checked)
-                  }
-                  className="mt-0.5 w-4 h-4 accent-blue-600 rounded"
-                />
-                <div>
-                  <div className="text-xs font-bold text-slate-800">
-                    Yêu cầu chụp ảnh khi chấm
+              <div className="space-y-2.5">
+                <label className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft.requirePhotoOnGps}
+                    onChange={(e) =>
+                      updateField('requirePhotoOnGps', e.target.checked)
+                    }
+                    className="mt-0.5 w-4 h-4 accent-blue-600 rounded"
+                  />
+                  <div>
+                    <div className="text-xs font-bold text-slate-800">
+                      Yêu cầu chụp ảnh khi chấm
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      Ảnh chụp trực tiếp từ camera hoặc file ảnh thật (tự động nén ≤ 480px JPEG) để đối chiếu khi có tranh cãi.
+                    </div>
                   </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    Ảnh không làm mục nhận diện, chỉ để đối chiếu khi có tranh
-                    cãi. Tắt đi sẽ bấm một nút là xong
+                </label>
+
+                <label className="p-3.5 rounded-xl bg-amber-50/60 border border-amber-200/80 flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(draft.demoGpsSimulationEnabled)}
+                    onChange={(e) =>
+                      updateField('demoGpsSimulationEnabled', e.target.checked)
+                    }
+                    className="mt-0.5 w-4 h-4 accent-amber-600 rounded"
+                  />
+                  <div>
+                    <div className="text-xs font-bold text-amber-900">
+                      Chế độ Demo giả lập vị trí GPS (Tắt ở bản thật)
+                    </div>
+                    <div className="text-[11px] text-amber-800 mt-0.5">
+                      Khi tắt (mặc định), ứng dụng bắt buộc lấy toạ độ GPS thật từ thiết bị (navigator.geolocation). Chỉ bật khi cần thử nghiệm trên máy không có GPS.
+                    </div>
                   </div>
-                </div>
-              </label>
+                </label>
+              </div>
             )}
           </div>
 
@@ -480,22 +509,43 @@ export const SettingsView: React.FC = () => {
             />
           </div>
 
-          <div className="max-w-xs">
-            <label className="block text-xs font-semibold text-slate-600 mb-1">
-              Bỏ qua bao nhiêu lần muộn mỗi tháng
-            </label>
-            <input
-              type="number"
-              min={0}
-              value={draft.graceLateCountPerMonth}
-              onChange={(e) =>
-                updateField(
-                  'graceLateCountPerMonth',
-                  Math.max(0, Number(e.target.value) || 0)
-                )
-              }
-              className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Số phút cho phép đi muộn trước khi tính muộn (Grace Minutes)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={60}
+                value={draft.graceLateMinutes ?? 5}
+                onChange={(e) =>
+                  updateField(
+                    'graceLateMinutes',
+                    Math.max(0, Number(e.target.value) || 0)
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Bỏ qua bao nhiêu lần muộn mỗi tháng
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={draft.graceLateCountPerMonth}
+                onChange={(e) =>
+                  updateField(
+                    'graceLateCountPerMonth',
+                    Math.max(0, Number(e.target.value) || 0)
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
           </div>
 
           {/* Tiered Table (Matches 00:54 - 00:55 in video) */}
@@ -631,12 +681,12 @@ export const SettingsView: React.FC = () => {
                 Quy tắc khung giờ chấm công &amp; Hệ số Tăng ca (OT)
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Thiết lập biên độ giờ vào sớm / ra muộn hợp lệ và hệ số nhân lương OT ngày thường / cuối tuần.
+                Thiết lập biên độ giờ vào sớm / đi muộn hợp lệ và hệ số nhân lương OT ngày thường / cuối tuần.
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">
                 Cho phép chấm công vào sớm trước giờ ca (phút)
@@ -649,6 +699,25 @@ export const SettingsView: React.FC = () => {
                 onChange={(e) =>
                   updateField(
                     'allowEarlyCheckInMinutes',
+                    Math.max(0, Number(e.target.value) || 0)
+                  )
+                }
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Số phút cho phép đi muộn (Grace Minutes)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={60}
+                value={draft.graceLateMinutes ?? 5}
+                onChange={(e) =>
+                  updateField(
+                    'graceLateMinutes',
                     Math.max(0, Number(e.target.value) || 0)
                   )
                 }
@@ -978,7 +1047,21 @@ export const SettingsView: React.FC = () => {
                 </button>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
+                  Backend API Base URL (Mặc định <code>/api</code>)
+                </label>
+                <input
+                  type="text"
+                  value={draft.backendApiUrl || '/api'}
+                  onChange={(e) =>
+                    updateField('backendApiUrl', e.target.value)
+                  }
+                  placeholder="/api hoặc https://api.phuonghihi.vn/api"
+                  className="w-full px-3.5 py-2 rounded-xl border border-emerald-300 bg-white text-xs font-mono"
+                />
+              </div>
               <div>
                 <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
                   Google Apps Script Web App URL
@@ -995,15 +1078,17 @@ export const SettingsView: React.FC = () => {
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-emerald-900 mb-1">
-                  API Secret Token (Header <code>X-Phuonghihi-Token</code>)
+                  API Secret Token (Chỉ lưu riêng trên máy này)
                 </label>
                 <input
                   type="password"
-                  value={draft.apiSecretToken || ''}
-                  onChange={(e) =>
-                    updateField('apiSecretToken', e.target.value)
-                  }
-                  placeholder="Nhập PHUONGHIHI_API_SECRET từ biến môi trường Server..."
+                  value={localToken}
+                  onChange={(e) => {
+                    setLocalToken(e.target.value);
+                    setLocalApiSecretToken(e.target.value);
+                    setIsDirty(true);
+                  }}
+                  placeholder="Nhập PHUONGHIHI_API_SECRET trên máy quản trị..."
                   className="w-full px-3.5 py-2 rounded-xl border border-emerald-300 bg-white text-xs font-mono"
                 />
               </div>

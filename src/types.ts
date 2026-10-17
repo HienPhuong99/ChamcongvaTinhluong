@@ -98,7 +98,8 @@ export interface AttendanceRecord {
   id: string;
   employeeId: string;
   date: string; // YYYY-MM-DD
-  shiftCode?: ShiftCode;
+  shiftCode?: ShiftCode | null;
+  unscheduled?: boolean;
   checkIn?: string; // HH:mm
   checkOut?: string; // HH:mm
   status: AttendanceStatus;
@@ -107,6 +108,8 @@ export interface AttendanceRecord {
   method?: 'GPS' | 'QR tại cửa' | 'Từ xa' | 'Máy vân tay' | 'Chấm hộ';
   distanceMeters?: number;
   gpsAccuracy?: number;
+  lat?: number;
+  lng?: number;
   photoUrl?: string;
   note?: string;
   remindedAt?: string;
@@ -238,12 +241,14 @@ export interface SystemSettings {
   // Đi muộn
   autoProcessLate: boolean;
   graceLateCountPerMonth: number;
+  graceLateMinutes?: number;
   lateTiers: LatePenaltyTier[];
   // Quy tắc chấm
   allowEarlyCheckInMinutes: number;
   allowLateCheckOutMinutes: number;
   otMultiplierWeekday: number;
   otMultiplierWeekend: number;
+  demoGpsSimulationEnabled?: boolean;
   // Tính lương
   standardWorkDays: number;
   insuranceRateEmployee: number; // 10.5%
@@ -256,8 +261,8 @@ export interface SystemSettings {
   biometricDeviceIp?: string;
   // Đồng bộ Google Sheets & Backend API
   googleSheetsWebAppUrl: string;
+  backendApiUrl?: string;
   autoSyncGoogleSheets: boolean;
-  apiSecretToken?: string;
 }
 
 export interface RoleDefinition {

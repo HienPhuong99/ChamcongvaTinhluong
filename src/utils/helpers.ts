@@ -65,143 +65,299 @@ export function sanitizeSpreadsheetValue(val: string | number | unknown): string
   return str;
 }
 
-/**
- * Runtime-generated / environment-provided keyed FNV-1a 64-bit hex signature for Kiosk QR & Personal QR (CWE-294, B5)
- * Avoids shipping a static secret constant in the JS bundle.
- */
-let cachedRuntimeQrSecret: string | null = null;
+const LOCAL_PIN_HASHES_KEY = 'phuonghihi_account_pin_hashes_v3';
+const LOCAL_API_TOKEN_KEY = 'phuonghihi_local_api_token_v3';
 
-export function getQrSigningSecret(): string {
-  if (cachedRuntimeQrSecret) return cachedRuntimeQrSecret;
+const FORBIDDEN_WEAK_WORDS = new Set([
+  'admin',
+  '@admin',
+  'password',
+  'phuonghihi',
+  'quanly',
+]);
+
+function isSequentialOrRepeatedDigits(str: string): boolean {
+  if (!/^\d+$/.test(str)) return false;
+  if (/^(\d)\1+$/.test(str)) return true;
+  let isAsc = true;
+  let isDesc = true;
+  for (let i = 1; i < str.length; i++) {
+    const diff = str.charCodeAt(i) - str.charCodeAt(i - 1);
+    if (diff !== 1) isAsc = false;
+    if (diff !== -1) isDesc = false;
+  }
+  return isAsc || isDesc;
+}
+
+export function isWeakOrForbiddenPin(
+  rawPin: string,
+  username?: string
+): string | null {
+  const clean = (rawPin || '').trim();
+  if (clean.length < 6) {
+    return 'Mã PIN phải có tối thiểu 6 ký tự.';
+  }
+  const lower = clean.toLowerCase();
+  if (FORBIDDEN_WEAK_WORDS.has(lower) || isSequentialOrRepeatedDigits(clean)) {
+    return 'Không được đặt mã PIN mặc định, số lặp hoặc dãy số liên tiếp dễ đoán.';
+  }
+  if (username) {
+    const cleanUser = username.trim().toLowerCase();
+    const withoutAt = cleanUser.replace(/^@/, '');
+    if (lower === cleanUser || lower === withoutAt) {
+      return 'Không được dùng tên đăng nhập làm mã PIN.';
+    }
+  }
+  return null;
+}
+
+/**
+ * Multi-round salted 128-bit one-way hash for local PIN verification (Issue B1)
+ */
+export function hashAccountPin(accountId: string, rawPin: string): string {
+  const clean = (rawPin || '').trim();
+  let state = `PH_PIN_V3::${accountId}::${clean}`;
+  let h1 = 0x811c9dc5;
+  let h2 = 0xcbf29ce4;
+  let h3 = 0x1b873593;
+  let h4 = 0x85ebca6b;
+  for (let round = 0; round < 64; round++) {
+    const roundStr = `${state}::R${round}::${h1 >>> 0}`;
+    for (let i = 0; i < roundStr.length; i++) {
+      const c = roundStr.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 16777619);
+      h2 = Math.imul(h2 ^ (c + round), 2246822507);
+      h3 = Math.imul(h3 ^ (c ^ h1), 3266489909);
+      h4 = Math.imul(h4 ^ (c ^ h2), 668265263);
+    }
+    state = `${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}`;
+  }
+  return [h1, h2, h3, h4]
+    .map((h) => (h >>> 0).toString(16).padStart(8, '0').toUpperCase())
+    .join('');
+}
+
+export function getLocalAccountPinHashes(): Record<string, string> {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
-      const stored = window.localStorage.getItem('phuonghihi_qr_hmac_seed_v1');
-      if (stored && stored.length >= 16) {
-        cachedRuntimeQrSecret = stored;
-        return stored;
+      const raw = window.localStorage.getItem(LOCAL_PIN_HASHES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed as Record<string, string>;
       }
-      const bytes = new Uint8Array(16);
-      if (window.crypto && window.crypto.getRandomValues) {
-        window.crypto.getRandomValues(bytes);
-      } else {
-        for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
-      }
-      const generated = Array.from(bytes)
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')
-        .toUpperCase();
-      window.localStorage.setItem('phuonghihi_qr_hmac_seed_v1', generated);
-      cachedRuntimeQrSecret = generated;
-      return generated;
     }
   } catch {
-    // ignore storage access errors
+    // ignore storage errors
   }
-  const envSecret =
-    (typeof globalThis !== 'undefined' &&
-      (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env
-        ?.PHUONGHIHI_QR_SECRET) ||
-    `RUNTIME-QR-${new Date().getFullYear()}`;
-  cachedRuntimeQrSecret = envSecret;
-  return envSecret;
+  return {};
 }
 
-export function computeKeyedSignature(payload: string, customSecret?: string): string {
-  const secret = customSecret || getQrSigningSecret();
-  const input = `${secret}::${payload}::${secret}`;
-  let h1 = 0xdeadbeef ^ input.length;
-  let h2 = 0x41c6ce57 ^ input.length;
-  for (let i = 0; i < input.length; i++) {
-    const ch = input.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  const hex1 = (h1 >>> 0).toString(16).padStart(8, '0').toUpperCase();
-  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0').toUpperCase();
-  return `${hex1}${hex2}`;
+export function hasAccountPinConfigured(accountId: string): boolean {
+  const map = getLocalAccountPinHashes();
+  return Boolean(map[accountId] && map[accountId].length >= 16);
 }
 
-export function generateDoorQrToken(nowMs = Date.now()): string {
-  const slot = Math.floor(nowMs / 45000);
-  const sig = computeKeyedSignature(`SLOT-${slot}`).slice(0, 10);
-  return `PH-123LELOI-${slot}-${sig}`;
-}
-
-export function verifyDoorQrToken(
-  token: string,
-  nowMs = Date.now()
-): { valid: boolean; reason?: string; error?: string } {
-  const clean = (token || '').trim().toUpperCase();
-  const parts = clean.split('-');
-  if (parts.length !== 4 || parts[0] !== 'PH' || parts[1] !== '123LELOI') {
-    const msg = 'Định dạng mã QR không hợp lệ';
-    return { valid: false, reason: msg, error: msg };
-  }
-  const slot = Number(parts[2]);
-  const providedSig = parts[3];
-  if (!Number.isInteger(slot) || !providedSig) {
-    const msg = 'Mã QR thiếu chữ ký bảo mật';
-    return { valid: false, reason: msg, error: msg };
-  }
-  const expectedSig = computeKeyedSignature(`SLOT-${slot}`).slice(0, 10);
-  if (providedSig !== expectedSig) {
-    const msg = 'Chữ ký mã QR không khớp (nghi vấn giả mạo)';
-    return { valid: false, reason: msg, error: msg };
-  }
-  const currentSlot = Math.floor(nowMs / 45000);
-  if (Math.abs(currentSlot - slot) > 1) {
-    const msg = 'Mã QR đã hết hạn sau 45 giây (chống chụp ảnh màn hình)';
-    return { valid: false, reason: msg, error: msg };
-  }
-  return { valid: true };
-}
-
-export function generatePersonalQrPayload(
-  empCode: string,
-  empName = '',
-  dept = '',
-  nowMs = Date.now()
-): string {
-  const slot = Math.floor(nowMs / 60000); // 60s rolling window
-  const sig = computeKeyedSignature(`EMP-${empCode}-${slot}`).slice(0, 12);
-  return JSON.stringify({
-    type: 'PHUONGHIHI_EMP_QR',
-    empCode,
-    empName,
-    dept,
-    slot,
-    sig,
-  });
-}
-
-export function verifyPersonalQrPayload(
-  rawJson: string,
-  nowMs = Date.now()
-): { valid: boolean; empCode?: string; reason?: string; error?: string } {
+export function setLocalAccountPin(accountId: string, rawPin: string): void {
   try {
-    const parsed = JSON.parse(rawJson);
-    if (!parsed || parsed.type !== 'PHUONGHIHI_EMP_QR' || !parsed.empCode || !parsed.sig) {
-      const msg = 'Mã QR cá nhân không đúng định dạng phuonghihi';
-      return { valid: false, reason: msg, error: msg };
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const map = getLocalAccountPinHashes();
+      map[accountId] = hashAccountPin(accountId, rawPin);
+      window.localStorage.setItem(LOCAL_PIN_HASHES_KEY, JSON.stringify(map));
     }
-    const slot = Number(parsed.slot);
-    const expectedSig = computeKeyedSignature(`EMP-${parsed.empCode}-${slot}`).slice(0, 12);
-    if (parsed.sig !== expectedSig) {
-      const msg = 'Chữ ký mã QR cá nhân không hợp lệ (nghi vấn giả mạo)';
-      return { valid: false, reason: msg, error: msg };
-    }
-    const currentSlot = Math.floor(nowMs / 60000);
-    if (Math.abs(currentSlot - slot) > 5) {
-      const msg = 'Mã QR cá nhân đã quá hạn 5 phút';
-      return { valid: false, reason: msg, error: msg };
-    }
-    return { valid: true, empCode: String(parsed.empCode) };
   } catch {
-    const msg = 'Dữ liệu QR không hợp lệ';
-    return { valid: false, reason: msg, error: msg };
+    // ignore storage errors
   }
+}
+
+export function verifyLocalAccountPin(
+  accountId: string,
+  rawPin: string,
+  username?: string
+): boolean {
+  if (isWeakOrForbiddenPin(rawPin, username) !== null) return false;
+  const map = getLocalAccountPinHashes();
+  const storedHash = map[accountId];
+  if (!storedHash) return false;
+  return storedHash === hashAccountPin(accountId, rawPin);
+}
+
+export function getLocalApiSecretToken(): string {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return (window.localStorage.getItem(LOCAL_API_TOKEN_KEY) || '').trim();
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
+export function setLocalApiSecretToken(token: string): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const clean = (token || '').trim();
+      if (clean) {
+        window.localStorage.setItem(LOCAL_API_TOKEN_KEY, clean);
+      } else {
+        window.localStorage.removeItem(LOCAL_API_TOKEN_KEY);
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function resolveBackendApiEndpoint(pathStr: string, customBaseUrl?: string): string {
+  const envUrl =
+    (import.meta as unknown as { env?: Record<string, string> }).env
+      ?.VITE_PHUONGHIHI_BACKEND_URL || '';
+  const base = (customBaseUrl || envUrl || '').trim().replace(/\/+$/, '');
+  if (!base || base === '/api') return pathStr;
+  if (base.endsWith('/api') && pathStr.startsWith('/api/')) {
+    return `${base}${pathStr.slice(4)}`;
+  }
+  return `${base}${pathStr.startsWith('/') ? pathStr : `/${pathStr}`}`;
+}
+
+/**
+ * Request a server-signed Door QR or Personal QR token so all devices share server verification (Issue B5)
+ */
+export async function requestQrFromServer(
+  params:
+    | { kind: 'door'; nowMs?: number; backendApiUrl?: string }
+    | {
+        kind: 'personal';
+        empCode: string;
+        empName?: string;
+        name?: string;
+        dept?: string;
+        department?: string;
+        nowMs?: number;
+        backendApiUrl?: string;
+      },
+  customBaseUrl?: string
+): Promise<string> {
+  const baseUrl = customBaseUrl || params.backendApiUrl;
+  const payload =
+    params.kind === 'personal'
+      ? {
+          kind: 'personal',
+          empCode: params.empCode,
+          empName: params.empName || params.name || '',
+          dept: params.dept || params.department || '',
+          nowMs: params.nowMs,
+        }
+      : { kind: 'door', nowMs: params.nowMs };
+
+  const url = resolveBackendApiEndpoint('/api/qr/generate', baseUrl);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    if (data && data.ok && typeof data.token === 'string') {
+      return data.token;
+    }
+  }
+  throw new Error('Không thể lấy mã QR từ máy chủ');
+}
+
+export async function verifyQrWithServer(
+  rawToken: string,
+  customBaseUrl?: string
+): Promise<{
+  valid: boolean;
+  kind?: 'door' | 'personal';
+  empCode?: string;
+  reason?: string;
+  error?: string;
+  serverVerified?: boolean;
+}> {
+  try {
+    const url = resolveBackendApiEndpoint('/api/qr/verify', customBaseUrl);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: rawToken }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const errReason = data?.reason || data?.error;
+      return {
+        valid: Boolean(data?.valid),
+        kind: data?.kind,
+        empCode: data?.empCode,
+        reason: errReason,
+        error: errReason,
+        serverVerified: true,
+      };
+    }
+  } catch {
+    // Server offline
+  }
+  const msg = 'Chữ ký mã QR không khớp hoặc không thể kết nối máy chủ xác thực QR.';
+  return {
+    valid: false,
+    reason: msg,
+    error: msg,
+    serverVerified: false,
+  };
+}
+
+/**
+ * Compress and resize an image File or DataURL so longest edge <= maxDim (480px) and JPEG quality = 0.6 (Issue E2)
+ */
+export async function compressImageToDataUrl(
+  fileOrDataUrl: File | string,
+  maxDim = 480,
+  quality = 0.6
+): Promise<string> {
+  const dataUrl: string =
+    typeof fileOrDataUrl === 'string'
+      ? fileOrDataUrl
+      : await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () =>
+            typeof reader.result === 'string'
+              ? resolve(reader.result)
+              : reject(new Error('Không đọc được dữ liệu ảnh'));
+          reader.onerror = () => reject(new Error('Lỗi đọc file ảnh'));
+          reader.readAsDataURL(fileOrDataUrl);
+        });
+
+  if (typeof document === 'undefined') return dataUrl;
+
+  return new Promise<string>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let width = img.naturalWidth || img.width || maxDim;
+      let height = img.naturalHeight || img.height || maxDim;
+      if (width > maxDim || height > maxDim) {
+        if (width >= height) {
+          height = Math.max(1, Math.round((height * maxDim) / width));
+          width = maxDim;
+        } else {
+          width = Math.max(1, Math.round((width * maxDim) / height));
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      const compressed = canvas.toDataURL('image/jpeg', quality);
+      resolve(compressed);
+    };
+    img.onerror = () => reject(new Error('Định dạng file ảnh không hợp lệ'));
+    img.src = dataUrl;
+  });
 }
 
 /**
@@ -212,6 +368,19 @@ export function getTodayIsoDate(now = new Date()): string {
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+export function getCurrentMonthPeriod(todayIso = getTodayIsoDate()): string {
+  return (todayIso || getTodayIsoDate()).slice(0, 7);
+}
+
+export function getPreviousMonthPeriod(todayIso = getTodayIsoDate()): string {
+  const iso = normalizeToIsoDate(todayIso) || getTodayIsoDate();
+  const [yStr, mStr] = iso.split('-');
+  const y = parseInt(yStr || '2026', 10);
+  const m = parseInt(mStr || '10', 10);
+  const dt = new Date(y, m - 2, 1);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
 }
 
 export function formatIsoToVN(isoDate: string): string {

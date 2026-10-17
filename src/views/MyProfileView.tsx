@@ -13,8 +13,9 @@ import { useHRM } from '../context/HRMContext';
 import {
   exportPayslipToPDF,
   formatVND,
-  generatePersonalQrPayload,
   getInitials,
+  getPreviousMonthPeriod,
+  requestQrFromServer,
 } from '../utils/helpers';
 
 export const MyProfileView: React.FC = () => {
@@ -25,9 +26,12 @@ export const MyProfileView: React.FC = () => {
     computePayrollRows,
     setActiveTab,
     setSelectedEmployeeId,
+    settings,
   } = useHRM();
 
-  const [period, setPeriod] = useState<'2026-10' | '2026-09' | '2026-08'>('2026-09');
+  const [period, setPeriod] = useState<string>(() =>
+    getPreviousMonthPeriod()
+  );
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
   const myEmp =
@@ -44,11 +48,27 @@ export const MyProfileView: React.FC = () => {
 
   useEffect(() => {
     if (!myEmp) return;
-    const payload = generatePersonalQrPayload(myEmp.code);
-    QRCode.toDataURL(payload, { width: 180, margin: 2 })
-      .then(setQrDataUrl)
-      .catch(() => {});
-  }, [myEmp]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const payload = await requestQrFromServer({
+          kind: 'personal',
+          empCode: myEmp.code,
+          empName: myEmp.name,
+          dept: myEmp.department,
+          backendApiUrl: settings.backendApiUrl,
+        });
+        if (cancelled || !payload) return;
+        const url = await QRCode.toDataURL(payload, { width: 180, margin: 2 });
+        if (!cancelled) setQrDataUrl(url);
+      } catch {
+        // ignore if server unavailable
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [myEmp, settings.backendApiUrl]);
 
   const remainingLeave = Math.max(
     0,
@@ -191,14 +211,16 @@ export const MyProfileView: React.FC = () => {
           <div className="flex items-center gap-2">
             <select
               value={period}
-              onChange={(e) =>
-                setPeriod(e.target.value as '2026-10' | '2026-09' | '2026-08')
-              }
+              onChange={(e) => setPeriod(e.target.value)}
               className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold bg-slate-50"
             >
-              <option value="2026-10">Kỳ 2026-10</option>
-              <option value="2026-09">Kỳ 2026-09</option>
-              <option value="2026-08">Kỳ 2026-08</option>
+              {['2026-10', '2026-09', '2026-08', period]
+                .filter((v, i, arr) => arr.indexOf(v) === i)
+                .map((p) => (
+                  <option key={p} value={p}>
+                    Kỳ {p}
+                  </option>
+                ))}
             </select>
             {myPayslip && (
               <button

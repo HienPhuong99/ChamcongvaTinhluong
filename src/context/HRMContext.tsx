@@ -47,12 +47,19 @@ import {
   canManagePayroll,
   canManageSchedules,
   canManageSettings,
+  compressImageToDataUrl,
   derivePeriodFromDate,
   formatIsoToVN,
+  getLocalApiSecretToken,
   getTodayIsoDate,
+  hasAccountPinConfigured,
+  isWeakOrForbiddenPin,
   normalizePeriodKey,
   normalizeToIsoDate,
+  resolveBackendApiEndpoint,
   sanitizeTextInput,
+  setLocalAccountPin,
+  verifyLocalAccountPin,
 } from '../utils/helpers';
 
 export { normalizeToIsoDate };
@@ -101,6 +108,8 @@ export interface HRMContextType {
   settings: SystemSettings;
   accounts: UserAccount[];
   currentAccount: UserAccount;
+  isLoggedOut: boolean;
+  logoutAccount: () => void;
   auditLogs: AuditLogEntry[];
   announcements: Announcement[];
   toasts: ToastMessage[];
@@ -110,7 +119,7 @@ export interface HRMContextType {
   isSyncingBackend: boolean;
   lastSyncedAt: string | null;
   syncNowWithBackend: () => Promise<boolean>;
-  pullStateFromBackend: () => Promise<boolean>;
+  pullStateFromBackend: (silent?: boolean) => Promise<boolean>;
   // Modals & Responsive Drawer
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
@@ -123,7 +132,7 @@ export interface HRMContextType {
   pendingAuthAccountId: string | null;
   setPendingAuthAccountId: (id: string | null) => void;
   // Actions
-  switchAccount: (accountId: string, pinOrPassword?: string) => boolean;
+  switchAccount: (accountId: string, pinOrPassword?: string, confirmNewPin?: string) => boolean;
   assignShift: (employeeId: string, date: string, shiftCode: ShiftCode | null) => void;
   bulkAssignShifts: (employeeIds: string[], dates: string[], shiftCode: ShiftCode | null) => void;
   autoScheduleWeekWithAI: (dates: string[]) => { assignedCount: number; skippedLeaveCount: number };
@@ -133,10 +142,12 @@ export interface HRMContextType {
     method: NonNullable<AttendanceRecord['method']>;
     distanceMeters?: number;
     gpsAccuracy?: number;
+    lat?: number;
+    lng?: number;
     photoUrl?: string;
     note?: string;
     date?: string;
-  }) => void;
+  }) => Promise<void> | void;
   proxyCheckIn: (params: {
     employeeId: string;
     shiftCode: ShiftCode;
@@ -154,6 +165,12 @@ export interface HRMContextType {
   importEmployees: (newEmps: Partial<Employee>[]) => number;
   generateChecklistTasks: (employeeId: string, type: 'Nhận người mới' | 'Tiễn người nghỉ') => void;
   toggleChecklistTask: (employeeId: string, taskId: string) => void;
+  computeEmployeeTimesheetRow: (
+    employeeId: string,
+    period: string,
+    existingRow?: MonthlyTimesheetRow,
+    confirmedOverride?: boolean
+  ) => MonthlyTimesheetRow;
   aggregateTimesheet: (period: string) => void;
   toggleConfirmTimesheet: (employeeId: string, period: string) => void;
   lockTimesheetPeriod: (period: string) => void;
@@ -185,19 +202,54 @@ export interface HRMContextType {
   resetDemoData: () => void;
 }
 
-export const STORAGE_KEY = 'phuonghihi_hrm_state_v2';
-const SYNC_CHANNEL_NAME = 'phuonghihi_hrm_sync_channel_v2';
+// Issue E3: Upgrade storage key to v3 and clean legacy v2 sales-script URLs & fake data
+export const STORAGE_KEY = 'phuonghihi_hrm_state_v3';
+const LEGACY_STORAGE_PREFIX = 'phuonghihi_hrm_state_v2';
+const SYNC_CHANNEL_NAME = 'phuonghihi_hrm_sync_channel_v3';
 
-function getConfiguredApiToken(settingsToken?: string): string {
-  if (settingsToken && settingsToken.trim()) return settingsToken.trim();
+function cleanupLegacyStorage(): void {
   try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      return window.localStorage.getItem('phuonghihi_api_secret_token') || '';
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const keysToDelete: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && (k.startsWith(LEGACY_STORAGE_PREFIX) || k.includes('_qr_hmac_'))) {
+        keysToDelete.push(k);
+      }
     }
+    keysToDelete.forEach((k) => window.localStorage.removeItem(k));
   } catch {
     // ignore storage errors
   }
-  return '';
+}
+
+cleanupLegacyStorage();
+
+function sanitizeSettingsObject(s: SystemSettings): SystemSettings {
+  const cleaned = { ...INITIAL_SETTINGS, ...s };
+  if (
+    cleaned.googleSheetsWebAppUrl &&
+    cleaned.googleSheetsWebAppUrl.includes('66egogcD')
+  ) {
+    cleaned.googleSheetsWebAppUrl = '';
+  }
+  // Issue C2: Never store secret token inside synced settings
+  const rec = cleaned as unknown as Record<string, unknown>;
+  for (const key of Object.keys(rec)) {
+    if (key.toLowerCase().includes('secrettoken') || key === 'token' || key === 'pin') {
+      delete rec[key];
+    }
+  }
+  return cleaned;
+}
+
+function sanitizeAccountsList(list: UserAccount[]): UserAccount[] {
+  return list.map((acc) => {
+    const copy = { ...acc };
+    // Issue B1 & C2: Never keep plaintext PIN in synced state
+    delete copy.pin;
+    return copy;
+  });
 }
 
 const HRMContext = createContext<HRMContextType | undefined>(undefined);
@@ -212,11 +264,26 @@ function loadPersisted<T>(key: string, fallback: T): T {
   }
 }
 
-function savePersisted<T>(key: string, value: T): void {
+let lastQuotaWarningAt = 0;
+
+function savePersisted<T>(key: string, value: T, onQuotaError?: (errMessage: string) => void): void {
   try {
     localStorage.setItem(`${STORAGE_KEY}_${key}`, JSON.stringify(value));
-  } catch {
-    // ignore storage quota errors
+  } catch (err) {
+    // Issue E2: Notify user immediately when localStorage quota is exceeded instead of failing silently
+    const now = Date.now();
+    if (now - lastQuotaWarningAt > 3000) {
+      lastQuotaWarningAt = now;
+      const msg =
+        err instanceof Error ? err.message : 'Bộ nhớ trình duyệt (localStorage) đã đầy';
+      if (onQuotaError) {
+        onQuotaError(msg);
+      } else if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('phuonghihi_storage_quota_error', { detail: { key, message: msg } })
+        );
+      }
+    }
   }
 }
 
@@ -257,10 +324,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadPersisted('bonusDeductions', INITIAL_BONUS_DEDUCTIONS)
   );
   const [settings, setSettings] = useState<SystemSettings>(() =>
-    loadPersisted('settings', INITIAL_SETTINGS)
+    sanitizeSettingsObject(loadPersisted('settings', INITIAL_SETTINGS))
   );
   const [accounts, setAccounts] = useState<UserAccount[]>(() =>
-    loadPersisted('accounts', INITIAL_ACCOUNTS)
+    sanitizeAccountsList(loadPersisted('accounts', INITIAL_ACCOUNTS))
   );
   const [currentAccountId, setCurrentAccountId] = useState<string>(() =>
     loadPersisted('currentAccountId', INITIAL_ACCOUNTS[0].id)
@@ -284,19 +351,9 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
-  const [isDoorQrModalOpen, setIsDoorQrModalOpen] = useState(false);
+  const [isDoorQrModalOpenState, setIsDoorQrModalOpenState] = useState(false);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [pendingAuthAccountId, setPendingAuthAccountId] = useState<string | null>(null);
-
-  // Safe fallback (Issue D5): if currentAccountId is locked, fall back to a least-privilege active account, NEVER escalating to super_admin
-  const currentAccount = useMemo(
-    () =>
-      accounts.find((a) => a.id === currentAccountId && a.active) ||
-      accounts.find((a) => a.active && a.roleId === 'employee') ||
-      accounts.find((a) => a.active && a.roleId !== 'super_admin') ||
-      accounts[0],
-    [accounts, currentAccountId]
-  );
 
   const showToast = useCallback(
     (title: string, description?: string, type: ToastMessage['type'] = 'success') => {
@@ -313,11 +370,86 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  // Issue E2: Listen for storage quota exceeded events and display user-facing warning toast
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const custom = ev as CustomEvent<{ key?: string; message?: string }>;
+      showToast(
+        'Bộ nhớ trình duyệt đã đầy (Quota Exceeded)!',
+        `Không thể lưu dữ liệu (${custom.detail?.key || 'state'}). Vui lòng xoá bớt ảnh hoặc đồng bộ lên Server.`,
+        'warning'
+      );
+    };
+    window.addEventListener('phuonghihi_storage_quota_error', handler);
+    return () => window.removeEventListener('phuonghihi_storage_quota_error', handler);
+  }, [showToast]);
+
+  // Issue D5: If currentAccountId is locked or logged out, NEVER fall back to another employee's account.
+  // Instead enter logged-out state and require explicit account selection/login.
+  const activeCurrentAccount = useMemo(
+    () => accounts.find((a) => a.id === currentAccountId && a.active) || null,
+    [accounts, currentAccountId]
+  );
+
+  const isLoggedOut = activeCurrentAccount === null;
+
+  useEffect(() => {
+    if (currentAccountId !== 'LOGGED_OUT' && !activeCurrentAccount) {
+      setCurrentAccountId('LOGGED_OUT');
+    }
+  }, [currentAccountId, activeCurrentAccount]);
+
+  const currentAccount = useMemo<UserAccount>(
+    () =>
+      activeCurrentAccount || {
+        id: 'LOGGED_OUT',
+        employeeId: '',
+        name: 'Chưa đăng nhập',
+        username: '@guest',
+        email: '',
+        roleId: 'door_kiosk',
+        dataScope: 'Chỉ mở mã QR tại cửa',
+        active: false,
+      },
+    [activeCurrentAccount]
+  );
+
+  const logoutAccount = useCallback(() => {
+    setCurrentAccountId('LOGGED_OUT');
+    setIsDoorQrModalOpenState(false);
+  }, []);
+
+  // Issue E1: Only door_kiosk or management roles can open the Door QR Kiosk modal
+  const canOpenDoorKiosk = useMemo(
+    () =>
+      !isLoggedOut &&
+      (currentAccount.roleId === 'door_kiosk' || canManageSchedules(currentAccount.roleId)),
+    [isLoggedOut, currentAccount.roleId]
+  );
+
+  const isDoorQrModalOpen = canOpenDoorKiosk && isDoorQrModalOpenState;
+
+  const setIsDoorQrModalOpen = useCallback(
+    (open: boolean) => {
+      if (open && !canOpenDoorKiosk) {
+        showToast(
+          'Không có quyền mở màn hình Kiosk QR tại cửa!',
+          'Chỉ thiết bị Kiosk tại cửa hoặc Quản lý mới được mở màn hình phát mã QR cửa hàng.',
+          'warning'
+        );
+        return;
+      }
+      setIsDoorQrModalOpenState(open);
+    },
+    [canOpenDoorKiosk, showToast]
+  );
+
   // Guard activeTab by RBAC permissions
   const setActiveTab = useCallback(
     (tab: NavTabId) => {
+      if (isLoggedOut) return;
       if (currentAccount.roleId === 'door_kiosk') {
-        setIsDoorQrModalOpen(true);
+        setIsDoorQrModalOpenState(true);
         return;
       }
       if (!canAccessTab(currentAccount.roleId, tab)) {
@@ -330,13 +462,14 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setActiveTabState(tab);
     },
-    [currentAccount, showToast]
+    [isLoggedOut, currentAccount, showToast]
   );
 
   // Ensure activeTab is valid when role changes
   useEffect(() => {
+    if (isLoggedOut) return;
     if (currentAccount.roleId === 'door_kiosk') {
-      setIsDoorQrModalOpen(true);
+      setIsDoorQrModalOpenState(true);
       return;
     }
     if (!canAccessTab(currentAccount.roleId, activeTab)) {
@@ -348,7 +481,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTabState('shifts');
       }
     }
-  }, [currentAccount, activeTab]);
+  }, [isLoggedOut, currentAccount, activeTab]);
 
   // Ensure attendanceRecords exist for selectedAttendanceDate based on shiftAssignments & approved leaves
   useEffect(() => {
@@ -434,10 +567,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setBonusDeductions(val as BonusDeductionItem[]);
             break;
           case 'settings':
-            setSettings(val as SystemSettings);
+            setSettings(sanitizeSettingsObject(val as SystemSettings));
             break;
           case 'accounts':
-            setAccounts(val as UserAccount[]);
+            setAccounts(sanitizeAccountsList(val as UserAccount[]));
             break;
           case 'auditLogs':
             setAuditLogs(val as AuditLogEntry[]);
@@ -511,10 +644,19 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => broadcastAndPersist('announcements', announcements), [announcements, broadcastAndPersist]);
   useEffect(() => savePersisted('lastSyncedAt', lastSyncedAt), [lastSyncedAt]);
 
-  // Push state to backend REST API (/api/state) or Google Sheets Web App
+  // Helper to resolve backend endpoint URL
+  const getBackendEndpoint = useCallback(
+    (path: string) => resolveBackendApiEndpoint(path, settings.backendApiUrl),
+    [settings.backendApiUrl]
+  );
+
+  // Push state to backend REST API (/api/state) or Google Sheets Web App (Issues C1, C2)
   const syncNowWithBackend = useCallback(async (): Promise<boolean> => {
     setIsSyncingBackend(true);
-    const apiToken = getConfiguredApiToken(settings.apiSecretToken);
+    const apiToken = getLocalApiSecretToken();
+    const cleanSettings = sanitizeSettingsObject(settings);
+    const cleanAccounts = sanitizeAccountsList(accounts);
+
     const payload = {
       employees,
       shiftAssignments,
@@ -524,8 +666,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timesheets,
       payrollPeriods,
       bonusDeductions,
-      settings,
-      accounts,
+      settings: cleanSettings,
+      accounts: cleanAccounts,
       auditLogs: auditLogs.slice(0, 100),
       announcements,
       exportedAt: new Date().toISOString(),
@@ -533,7 +675,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     let syncedOk = false;
     try {
-      const res = await fetch('/api/state', {
+      const res = await fetch(getBackendEndpoint('/api/state'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -549,17 +691,17 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (
-      settings.googleSheetsWebAppUrl &&
-      settings.googleSheetsWebAppUrl.startsWith('https://script.google.com/')
+      cleanSettings.googleSheetsWebAppUrl &&
+      cleanSettings.googleSheetsWebAppUrl.startsWith('https://script.google.com/')
     ) {
       try {
-        const gsRes = await fetch(settings.googleSheetsWebAppUrl, {
+        const gsRes = await fetch(cleanSettings.googleSheetsWebAppUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'text/plain;charset=utf-8',
           },
           body: JSON.stringify({
-            action: 'SYNC_FULL_STATE',
+            action: 'UPSERT_STATE',
             token: apiToken,
             state: payload,
           }),
@@ -595,91 +737,129 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     accounts,
     auditLogs,
     announcements,
+    getBackendEndpoint,
   ]);
 
-  // Pull state from backend REST API (/api/state) to synchronize across devices (Issue C1)
-  const pullStateFromBackend = useCallback(async (): Promise<boolean> => {
-    setIsSyncingBackend(true);
-    const apiToken = getConfiguredApiToken(settings.apiSecretToken);
-    let pulledOk = false;
-    try {
-      const res = await fetch('/api/state', {
-        method: 'GET',
-        headers: {
-          ...(apiToken ? { 'X-Phuonghihi-Token': apiToken } : {}),
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const remote = data && typeof data === 'object' && data.state ? data.state : data;
-        if (remote && typeof remote === 'object') {
-          isApplyingRemoteUpdate.current = true;
-          if (Array.isArray(remote.employees) && remote.employees.length > 0) {
-            setEmployees(remote.employees);
+  // Pull state from backend REST API (/api/state) to synchronize across devices (Issues C1, C2)
+  const pullStateFromBackend = useCallback(
+    async (silent = false): Promise<boolean> => {
+      if (!silent) setIsSyncingBackend(true);
+      const apiToken = getLocalApiSecretToken();
+      let pulledOk = false;
+      try {
+        const res = await fetch(getBackendEndpoint('/api/state'), {
+          method: 'GET',
+          headers: {
+            ...(apiToken ? { 'X-Phuonghihi-Token': apiToken } : {}),
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const remote = data && typeof data === 'object' && data.state ? data.state : data;
+          if (remote && typeof remote === 'object') {
+            isApplyingRemoteUpdate.current = true;
+            if (Array.isArray(remote.employees) && remote.employees.length > 0) {
+              setEmployees(remote.employees);
+            }
+            if (Array.isArray(remote.shiftAssignments) && remote.shiftAssignments.length > 0) {
+              setShiftAssignments((prev) => {
+                const map = new Map<string, ShiftAssignment>();
+                prev.forEach((a) => map.set(`${a.employeeId}__${a.date}`, a));
+                (remote.shiftAssignments as ShiftAssignment[]).forEach((a) =>
+                  map.set(`${a.employeeId}__${a.date}`, a)
+                );
+                return Array.from(map.values());
+              });
+            }
+            if (Array.isArray(remote.attendanceRecords) && remote.attendanceRecords.length > 0) {
+              setAttendanceRecords((prev) => {
+                const map = new Map<string, AttendanceRecord>();
+                prev.forEach((r) => map.set(`${r.employeeId}__${r.date}`, r));
+                (remote.attendanceRecords as AttendanceRecord[]).forEach((r) => {
+                  const key = `${r.employeeId}__${r.date}`;
+                  const existing = map.get(key);
+                  map.set(key, existing ? { ...existing, ...r } : r);
+                });
+                return Array.from(map.values());
+              });
+            }
+            if (Array.isArray(remote.requests) && remote.requests.length > 0) {
+              setRequests((prev) => {
+                const map = new Map<string, LeaveOrOtRequest>();
+                prev.forEach((r) => map.set(r.id, r));
+                (remote.requests as LeaveOrOtRequest[]).forEach((r) => map.set(r.id, r));
+                return Array.from(map.values());
+              });
+            }
+            if (Array.isArray(remote.leaveBalances) && remote.leaveBalances.length > 0) {
+              setLeaveBalances(remote.leaveBalances);
+            }
+            if (Array.isArray(remote.timesheets) && remote.timesheets.length > 0) {
+              setTimesheets(remote.timesheets);
+            }
+            const remotePeriods = remote.payrollPeriods || remote.payrollPeriodStates;
+            if (Array.isArray(remotePeriods) && remotePeriods.length > 0) {
+              setPayrollPeriods(remotePeriods);
+            }
+            const remoteBonuses = remote.bonusDeductions || remote.payrollOverrides;
+            if (Array.isArray(remoteBonuses) && remoteBonuses.length > 0) {
+              setBonusDeductions(remoteBonuses);
+            }
+            if (remote.settings && typeof remote.settings === 'object') {
+              setSettings((prev) =>
+                sanitizeSettingsObject({ ...prev, ...(remote.settings as SystemSettings) })
+              );
+            }
+            const remoteAccounts = remote.accounts || remote.systemUsers;
+            if (Array.isArray(remoteAccounts) && remoteAccounts.length > 0) {
+              setAccounts(sanitizeAccountsList(remoteAccounts));
+            }
+            if (Array.isArray(remote.auditLogs) && remote.auditLogs.length > 0) {
+              setAuditLogs(remote.auditLogs);
+            }
+            if (Array.isArray(remote.announcements) && remote.announcements.length > 0) {
+              setAnnouncements(remote.announcements);
+            }
+            setTimeout(() => {
+              isApplyingRemoteUpdate.current = false;
+            }, 50);
+            pulledOk = true;
           }
-          if (Array.isArray(remote.shiftAssignments)) {
-            setShiftAssignments(remote.shiftAssignments);
-          }
-          if (Array.isArray(remote.attendanceRecords)) {
-            setAttendanceRecords(remote.attendanceRecords);
-          }
-          if (Array.isArray(remote.requests)) {
-            setRequests(remote.requests);
-          }
-          if (Array.isArray(remote.leaveBalances)) {
-            setLeaveBalances(remote.leaveBalances);
-          }
-          if (Array.isArray(remote.timesheets)) {
-            setTimesheets(remote.timesheets);
-          }
-          const remotePeriods = remote.payrollPeriods || remote.payrollPeriodStates;
-          if (Array.isArray(remotePeriods)) {
-            setPayrollPeriods(remotePeriods);
-          }
-          const remoteBonuses = remote.bonusDeductions || remote.payrollOverrides;
-          if (Array.isArray(remoteBonuses)) {
-            setBonusDeductions(remoteBonuses);
-          }
-          if (remote.settings && typeof remote.settings === 'object') {
-            setSettings((prev) => ({ ...prev, ...remote.settings }));
-          }
-          const remoteAccounts = remote.accounts || remote.systemUsers;
-          if (Array.isArray(remoteAccounts) && remoteAccounts.length > 0) {
-            setAccounts(remoteAccounts);
-          }
-          if (Array.isArray(remote.auditLogs)) {
-            setAuditLogs(remote.auditLogs);
-          }
-          if (Array.isArray(remote.announcements)) {
-            setAnnouncements(remote.announcements);
-          }
-          setTimeout(() => {
-            isApplyingRemoteUpdate.current = false;
-          }, 50);
-          pulledOk = true;
         }
+      } catch {
+        // Server unreachable
       }
-    } catch {
-      // Server unreachable
-    }
-    const nowStamp = new Date().toLocaleTimeString('vi-VN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-    if (pulledOk) {
-      setLastSyncedAt(`${nowStamp} ${formatIsoToVN(getTodayIsoDate())}`);
-      showToast('Đã tải dữ liệu mới nhất từ Server!', `Đồng bộ lúc ${nowStamp}`);
-    } else {
-      showToast(
-        'Không thể tải dữ liệu từ Server!',
-        'Vui lòng kiểm tra kết nối máy chủ hoặc khoá API Token trong mục Cài đặt.',
-        'warning'
-      );
-    }
-    setIsSyncingBackend(false);
-    return pulledOk;
-  }, [settings.apiSecretToken, showToast]);
+      const nowStamp = new Date().toLocaleTimeString('vi-VN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      if (pulledOk) {
+        setLastSyncedAt(`${nowStamp} ${formatIsoToVN(getTodayIsoDate())}`);
+        if (!silent) {
+          showToast('Đã tải dữ liệu mới nhất từ Server!', `Đồng bộ lúc ${nowStamp}`);
+        }
+      } else if (!silent) {
+        showToast(
+          'Không thể tải dữ liệu từ Server!',
+          'Vui lòng kiểm tra kết nối máy chủ hoặc URL API trong mục Cài đặt.',
+          'warning'
+        );
+      }
+      if (!silent) setIsSyncingBackend(false);
+      return pulledOk;
+    },
+    [getBackendEndpoint, showToast]
+  );
+
+  // Issue C1: Automatically pull on app startup and periodically every 15s
+  useEffect(() => {
+    pullStateFromBackend(true);
+    const timer = window.setInterval(() => {
+      pullStateFromBackend(true);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [pullStateFromBackend]);
 
   // Global Ctrl+K shortcut
   useEffect(() => {
@@ -693,9 +873,13 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Scoped employees based on RBAC role & department
+  // Scoped employees based on RBAC role & department (Issue D5: empty when logged out)
   const scopedEmployees = useMemo(() => {
-    if (currentAccount.roleId === 'door_kiosk' || currentAccount.dataScope === 'Chỉ mở mã QR tại cửa') {
+    if (
+      isLoggedOut ||
+      currentAccount.roleId === 'door_kiosk' ||
+      currentAccount.dataScope === 'Chỉ mở mã QR tại cửa'
+    ) {
       return [];
     }
     if (currentAccount.dataScope === 'Toàn hệ thống') {
@@ -708,7 +892,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return employees.filter((e) => e.id === currentAccount.employeeId);
     }
     return employees.filter((e) => e.id === currentAccount.employeeId);
-  }, [employees, currentAccount]);
+  }, [isLoggedOut, employees, currentAccount]);
 
   const formatNowTimestamp = useCallback(() => {
     const now = new Date();
@@ -732,8 +916,15 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [formatNowTimestamp, currentAccount.email]
   );
 
-  // Authenticated account switching (Issue B1): require PIN/password when switching accounts
-  const switchAccount = (accountId: string, pinOrPassword?: string): boolean => {
+  // Authenticated account switching (Issue B1):
+  // - Never accept target.username or default '123456'
+  // - Require setting a PIN on first login if no PIN hash exists yet
+  // - Store PIN as salted hash in localStorage only (never synced)
+  const switchAccount = (
+    accountId: string,
+    pinOrPassword?: string,
+    confirmNewPin?: string
+  ): boolean => {
     const target = accounts.find((a) => a.id === accountId);
     if (!target) return false;
     if (!target.active) {
@@ -744,31 +935,54 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       return false;
     }
-    if (accountId === currentAccount.id) {
+    if (!isLoggedOut && accountId === currentAccount.id) {
       setPendingAuthAccountId(null);
       return true;
     }
-    const expectedPin = target.pin || '123456';
+
     const cleanInput = (pinOrPassword || '').trim();
     if (!cleanInput) {
       setPendingAuthAccountId(accountId);
       return false;
     }
-    if (cleanInput !== expectedPin && cleanInput !== target.username) {
-      showToast(
-        'Mật khẩu / Mã PIN xác thực không đúng!',
-        `Không thể chuyển sang tài khoản ${target.name}.`,
-        'warning'
-      );
-      return false;
+
+    const isPinConfigured = hasAccountPinConfigured(target.id);
+    if (!isPinConfigured) {
+      const validationErr = isWeakOrForbiddenPin(cleanInput, target.username);
+      if (validationErr) {
+        showToast('Mã PIN không hợp lệ!', validationErr, 'warning');
+        return false;
+      }
+      if (confirmNewPin !== undefined && cleanInput !== confirmNewPin.trim()) {
+        showToast(
+          'Mã PIN xác nhận không khớp!',
+          'Vui lòng nhập lại đúng mã PIN mới ở cả hai ô.',
+          'warning'
+        );
+        return false;
+      }
+      setLocalAccountPin(target.id, cleanInput);
+    } else {
+      if (!verifyLocalAccountPin(target.id, cleanInput)) {
+        showToast(
+          'Mã PIN xác thực không đúng!',
+          `Không thể đăng nhập vào tài khoản ${target.name}.`,
+          'warning'
+        );
+        return false;
+      }
     }
 
     setPendingAuthAccountId(null);
     setCurrentAccountId(accountId);
     if (target.roleId === 'door_kiosk') {
-      setIsDoorQrModalOpen(true);
+      setIsDoorQrModalOpenState(true);
     }
-    addAuditLog('Đăng nhập / Chuyển tài khoản', 'Phân quyền', `${target.name} (${target.username})`);
+    addAuditLog(
+      isPinConfigured ? 'Đăng nhập / Chuyển tài khoản' : 'Thiết lập PIN lần đầu & Đăng nhập',
+      'Phân quyền',
+      `${target.name} (${target.username})`
+    );
     showToast(
       `Đã xác thực & chuyển sang: ${target.name}`,
       `Phạm vi dữ liệu: ${target.dataScope}${target.department ? ` (${target.department})` : ''}`,
@@ -811,9 +1025,14 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map((r) => {
         if (r.employeeId === employeeId && r.date === date && !r.checkIn) {
           if (!shiftCode) {
-            return { ...r, shiftCode: undefined, status: 'Không có ca' };
+            return { ...r, shiftCode: null, unscheduled: true, status: 'Không có ca' };
           }
-          return { ...r, shiftCode, status: r.status === 'Không có ca' ? 'Chưa chấm' : r.status };
+          return {
+            ...r,
+            shiftCode,
+            unscheduled: false,
+            status: r.status === 'Không có ca' ? 'Chưa chấm' : r.status,
+          };
         }
         return r;
       })
@@ -854,8 +1073,13 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAttendanceRecords((prev) =>
       prev.map((r) => {
         if (empSet.has(r.employeeId) && dateSet.has(r.date) && !r.checkIn) {
-          if (!shiftCode) return { ...r, shiftCode: undefined, status: 'Không có ca' };
-          return { ...r, shiftCode, status: r.status === 'Không có ca' ? 'Chưa chấm' : r.status };
+          if (!shiftCode) return { ...r, shiftCode: null, unscheduled: true, status: 'Không có ca' };
+          return {
+            ...r,
+            shiftCode,
+            unscheduled: false,
+            status: r.status === 'Không có ca' ? 'Chưa chấm' : r.status,
+          };
         }
         return r;
       })
@@ -942,11 +1166,13 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { assignedCount, skippedLeaveCount };
   };
 
-  const checkInOrOut = ({
+  const checkInOrOut = async ({
     employeeId,
     method,
     distanceMeters = 27,
     gpsAccuracy = 12,
+    lat,
+    lng,
     photoUrl,
     note,
     date,
@@ -955,12 +1181,32 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     method: NonNullable<AttendanceRecord['method']>;
     distanceMeters?: number;
     gpsAccuracy?: number;
+    lat?: number;
+    lng?: number;
     photoUrl?: string;
     note?: string;
     date?: string;
   }) => {
     const emp = employees.find((e) => e.id === employeeId);
-    const targetDate = date || getTodayIsoDate();
+    const now = new Date();
+    let targetDate = date || getTodayIsoDate();
+
+    // Overnight shift support: if checking in/out between 00:00 and 07:00 and employee had an overnight ('dem') shift yesterday
+    if (!date && now.getHours() < 7) {
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const yIso = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(
+        yesterday.getDate()
+      ).padStart(2, '0')}`;
+      const yesterdayShift = shiftAssignments.find(
+        (a) => a.employeeId === employeeId && a.date === yIso && a.shiftCode === 'dem'
+      );
+      const yesterdayRec = attendanceRecords.find(
+        (r) => r.employeeId === employeeId && r.date === yIso
+      );
+      if (yesterdayShift && (!yesterdayRec?.checkOut || !yesterdayRec?.checkIn)) {
+        targetDate = yIso;
+      }
+    }
 
     // Validate attendance method against system settings (Issues B3, C8)
     if (method === 'GPS') {
@@ -971,7 +1217,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (settings.requirePhotoOnGps && !photoUrl) {
         showToast(
           'Bắt buộc chụp ảnh selfie khi chấm công GPS!',
-          'Vui lòng chụp ảnh xác thực khuôn mặt tại quầy trước khi bấm Chấm công GPS.',
+          'Vui lòng chụp ảnh xác thực khuôn mặt bằng Camera hoặc chọn ảnh chụp trước khi bấm Chấm công GPS.',
           'warning'
         );
         return;
@@ -1012,83 +1258,118 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(
       now.getMinutes()
     ).padStart(2, '0')}`;
     const cleanNote = note ? sanitizeTextInput(note, 300) : undefined;
 
-    // Issue D3: Check if employee actually has a scheduled shift on targetDate
+    // Issue D3: Determine hasScheduledShift strictly from shiftAssignments (NOT from existingForDate.shiftCode)
     const scheduledAssignment = shiftAssignments.find(
       (a) => a.employeeId === employeeId && a.date === targetDate
     );
-    const hasScheduledShift = Boolean(existingForDate?.shiftCode || scheduledAssignment?.shiftCode);
-    const assignedShift =
-      existingForDate?.shiftCode || scheduledAssignment?.shiftCode || 'hanh_chinh';
-    const shiftTpl = shiftTemplates.find((s) => s.code === assignedShift) || shiftTemplates[0];
+    const hasScheduledShift = Boolean(scheduledAssignment?.shiftCode);
+    const assignedShift: ShiftCode | null = hasScheduledShift
+      ? scheduledAssignment!.shiftCode
+      : null;
+    const shiftTpl =
+      (assignedShift ? shiftTemplates.find((s) => s.code === assignedShift) : undefined) ||
+      shiftTemplates[0];
 
     const isCheckingOut = Boolean(existingForDate?.checkIn && !existingForDate?.checkOut);
+
+    // Issue C8: Enforce allowEarlyCheckInMinutes when checking in for a scheduled shift
+    if (!isCheckingOut && hasScheduledShift && settings.allowEarlyCheckInMinutes > 0) {
+      const [sh, sm] = shiftTpl.startTime.split(':').map(Number);
+      const shiftStartMins = (sh || 0) * 60 + (sm || 0);
+      let nowMins = now.getHours() * 60 + now.getMinutes();
+      if (assignedShift === 'dem' && nowMins < 12 * 60 && shiftStartMins >= 18 * 60) {
+        nowMins += 24 * 60;
+      }
+      const earliestAllowedMins = shiftStartMins - settings.allowEarlyCheckInMinutes;
+      if (nowMins < earliestAllowedMins) {
+        const allowH = String(Math.floor(((earliestAllowedMins % 1440) + 1440) % 1440 / 60)).padStart(2, '0');
+        const allowM = String(((earliestAllowedMins % 60) + 60) % 60).padStart(2, '0');
+        showToast(
+          'Chưa đến giờ mở cổng chấm công vào ca!',
+          `Ca ${shiftTpl.name} (${shiftTpl.startTime}) chỉ cho phép chấm công sớm tối đa ${settings.allowEarlyCheckInMinutes} phút (từ ${allowH}:${allowM}).`,
+          'warning'
+        );
+        return;
+      }
+    }
+
+    // Issue E2: Compress photoUrl (≤ 480px, JPEG 0.6) so even a 4MB photo stays ~25KB in localStorage
+    let finalPhotoUrl = photoUrl;
+    if (photoUrl && photoUrl.startsWith('data:image/') && photoUrl.length > 50_000) {
+      try {
+        finalPhotoUrl = await compressImageToDataUrl(photoUrl, 480, 0.6);
+      } catch {
+        // fallback to original if compression fails
+      }
+    }
+
     const nextCheckIn = existingForDate?.checkIn || timeStr;
     const nextCheckOut = isCheckingOut ? timeStr : existingForDate?.checkOut;
+    const graceMins = Math.max(0, Number(settings.graceLateMinutes ?? 0));
 
     const calcResult = calculateCheckInLateAndOt({
       checkIn: nextCheckIn,
       checkOut: nextCheckOut,
       shiftStart: shiftTpl.startTime,
       shiftEnd: shiftTpl.endTime,
-      graceMinutes: 0,
+      graceMinutes: graceMins,
     });
 
-    // If employee had no scheduled shift on this date (e.g. weekend extra shift), do NOT penalize as late (Issue D3)
+    // Issue D3: If employee has no scheduled shift on targetDate, NEVER mark as late on either check-in or check-out
     const lateMinutes = hasScheduledShift ? calcResult.lateMinutes : 0;
     const otHours = calcResult.otHours;
     const status: AttendanceRecord['status'] = hasScheduledShift ? calcResult.status : 'Đúng giờ';
 
+    const upsertedRecord: AttendanceRecord = {
+      id: existingForDate?.id || `ATT-${targetDate}-${employeeId}`,
+      employeeId,
+      date: targetDate,
+      shiftCode: assignedShift,
+      unscheduled: !hasScheduledShift,
+      checkIn: nextCheckIn,
+      checkOut: nextCheckOut,
+      status,
+      lateMinutes,
+      otHours,
+      method,
+      distanceMeters,
+      gpsAccuracy,
+      lat: lat ?? existingForDate?.lat,
+      lng: lng ?? existingForDate?.lng,
+      photoUrl: finalPhotoUrl || existingForDate?.photoUrl,
+      note:
+        cleanNote ||
+        existingForDate?.note ||
+        (!hasScheduledShift ? 'Làm thêm ngoài lịch phân ca' : undefined),
+    };
+
     setAttendanceRecords((prev) => {
       const existing = prev.find((r) => r.employeeId === employeeId && r.date === targetDate);
       if (existing) {
-        return prev.map((r) =>
-          r.id === existing.id
-            ? {
-                ...r,
-                shiftCode: assignedShift,
-                checkIn: nextCheckIn,
-                checkOut: nextCheckOut,
-                status,
-                lateMinutes,
-                otHours,
-                method,
-                distanceMeters,
-                gpsAccuracy,
-                photoUrl: photoUrl || r.photoUrl,
-                note:
-                  cleanNote ||
-                  r.note ||
-                  (!hasScheduledShift ? 'Làm thêm ngoài lịch phân ca' : undefined),
-              }
-            : r
-        );
+        return prev.map((r) => (r.id === existing.id ? upsertedRecord : r));
       }
-      return [
-        ...prev,
-        {
-          id: `ATT-${targetDate}-${employeeId}`,
-          employeeId,
-          date: targetDate,
-          shiftCode: assignedShift,
-          checkIn: nextCheckIn,
-          checkOut: nextCheckOut,
-          status,
-          lateMinutes,
-          otHours,
-          method,
-          distanceMeters,
-          gpsAccuracy,
-          photoUrl,
-          note: cleanNote || (!hasScheduledShift ? 'Làm thêm ngoài lịch phân ca' : undefined),
-        },
-      ];
+      return [...prev, upsertedRecord];
     });
+
+    // Issue C1: Immediately push this attendance record to backend (works even on employee devices without admin token)
+    try {
+      fetch(getBackendEndpoint('/api/attendance'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          record: upsertedRecord,
+          lat,
+          lng,
+        }),
+      }).catch(() => {});
+    } catch {
+      // ignore offline error
+    }
 
     addAuditLog(
       isCheckingOut ? 'Chấm công ra' : 'Chấm công vào',
@@ -1139,12 +1420,13 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cleanReason = sanitizeTextInput(reason, 300);
     const emp = employees.find((e) => e.id === employeeId);
     const shiftTpl = shiftTemplates.find((s) => s.code === shiftCode) || shiftTemplates[0];
+    const graceMins = Math.max(0, Number(settings.graceLateMinutes ?? 0));
     const { lateMinutes, otHours, status } = calculateCheckInLateAndOt({
       checkIn,
       checkOut,
       shiftStart: shiftTpl.startTime,
       shiftEnd: shiftTpl.endTime,
-      graceMinutes: 0,
+      graceMinutes: graceMins,
     });
 
     setAttendanceRecords((prev) => {
@@ -1472,7 +1754,17 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast('Số tiền ứng không hợp lệ!', 'Vui lòng nhập số tiền ứng lớn hơn 0đ.', 'warning');
         return false;
       }
-      const maxAdvance = Math.round((emp?.baseSalary || 15000000) * 0.3);
+      // Issue C5: Do NOT fallback to 15,000,000 when employee has no declared baseSalary (0đ -> limit = 0đ)
+      const declaredBase = Math.max(0, Number(emp?.baseSalary) || 0);
+      const maxAdvance = declaredBase > 0 ? Math.round(declaredBase * 0.3) : 0;
+      if (maxAdvance <= 0) {
+        showToast(
+          'Chưa thể ứng lương nhanh (Hạn mức 0đ)!',
+          `Nhân viên ${emp?.name || req.employeeId} chưa được khai mức lương cơ bản nên hạn mức ứng lương là 0 ₫.`,
+          'warning'
+        );
+        return false;
+      }
       if (amt > maxAdvance) {
         showToast(
           'Vượt hạn mức ứng lương nhanh (EWA 30%)!',
@@ -1831,7 +2123,6 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (r) => r.employeeId === employeeId && r.date.startsWith(period)
       );
       const checkedInRecords = periodAtt.filter((r) => Boolean(r.checkIn));
-      const absentRecords = periodAtt.filter((r) => !r.checkIn && r.status === 'Vắng');
       const liveLateRecords = checkedInRecords.filter((r) => r.lateMinutes > 0);
       const liveLateMins = liveLateRecords.reduce((s, r) => s + r.lateMinutes, 0);
       const liveOtFromAtt = checkedInRecords.reduce((s, r) => s + (r.otHours || 0), 0);
@@ -1857,9 +2148,30 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       const approvedOtHours = approvedOtReqs.reduce((s, r) => s + (r.otHours || 0), 0);
 
-      // If there are daily attendance records in this period (or no historical snapshot exists),
-      // compute strictly from real attendanceRecords and approved requests.
-      if (periodAtt.length > 0 || !existingRow) {
+      // Issue E4: Calculate absentDays = past days with scheduled shifts - checked-in scheduled days - approved leave days
+      const todayIso = getTodayIsoDate();
+      const maxAttDateInPeriod = attendanceRecords
+        .filter((r) => r.date.startsWith(period) && Boolean(r.checkIn))
+        .reduce((max, r) => (r.date > max ? r.date : max), '');
+      const cutoffDate = todayIso > maxAttDateInPeriod ? todayIso : maxAttDateInPeriod || todayIso;
+
+      const periodScheduledShifts = shiftAssignments.filter(
+        (a) => a.employeeId === employeeId && a.date.startsWith(period) && Boolean(a.shiftCode)
+      );
+      const pastScheduledShifts = periodScheduledShifts.filter((a) => a.date <= cutoffDate);
+      const checkedInDatesSet = new Set(checkedInRecords.map((r) => r.date));
+      const checkedInOnPastScheduledCount = pastScheduledShifts.filter((a) =>
+        checkedInDatesSet.has(a.date)
+      ).length;
+      const explicitAbsentCount = periodAtt.filter((r) => !r.checkIn && r.status === 'Vắng').length;
+      const computedAbsentDays = Math.max(
+        explicitAbsentCount,
+        Math.max(0, pastScheduledShifts.length - checkedInOnPastScheduledCount - approvedLeaveDays)
+      );
+
+      // If there are daily attendance records or scheduled shifts in this period (or no historical snapshot exists),
+      // compute strictly from real attendanceRecords, shiftAssignments, and approved requests.
+      if (periodAtt.length > 0 || periodScheduledShifts.length > 0 || !existingRow) {
         const actualDays = checkedInRecords.reduce((sum, r) => {
           const tpl = shiftTemplates.find((s) => s.code === r.shiftCode);
           return sum + (tpl ? tpl.workDays : 1);
@@ -1870,7 +2182,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           standardDays,
           actualDays,
           paidLeaveDays: approvedLeaveDays,
-          absentDays: absentRecords.length,
+          absentDays: computedAbsentDays,
           lateCount: liveLateRecords.length,
           lateMinutes: liveLateMins,
           otHours: Math.max(liveOtFromAtt, approvedOtHours),
@@ -1887,7 +2199,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         confirmed: confirmedOverride ?? existingRow.confirmed,
       };
     },
-    [attendanceRecords, requests, settings.standardWorkDays, shiftTemplates]
+    [attendanceRecords, requests, settings.standardWorkDays, shiftAssignments, shiftTemplates]
   );
 
   const aggregateTimesheet = (period: string) => {
@@ -2452,7 +2764,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('Không có quyền thay đổi cài đặt hệ thống!', undefined, 'warning');
       return;
     }
-    setSettings(newSettings);
+    setSettings(sanitizeSettingsObject(newSettings));
     addAuditLog('Đổi cấu hình', 'Cài đặt', 'attendance & payroll');
     showToast(
       'Đã lưu thay đổi cài đặt hệ thống!',
@@ -2515,13 +2827,25 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const cleanName = sanitizeTextInput(acc.name, 100);
     const cleanUsername = sanitizeTextInput(acc.username, 60);
+    const normalizedUsername = cleanUsername.startsWith('@') ? cleanUsername : `@${cleanUsername}`;
+    const newId = `ACC-${Date.now()}`;
+    const candidatePin = acc.pin?.trim() || '';
+    if (candidatePin) {
+      const pinErr = isWeakOrForbiddenPin(candidatePin, normalizedUsername);
+      if (pinErr) {
+        showToast('Mã PIN khởi tạo không hợp lệ!', pinErr, 'warning');
+        return;
+      }
+      setLocalAccountPin(newId, candidatePin);
+    }
+    // Issue B1 & C2: Never assign default '123456' or store plaintext PIN in synced accounts
     const newAcc: UserAccount = {
       ...acc,
       name: cleanName,
-      username: cleanUsername.startsWith('@') ? cleanUsername : `@${cleanUsername}`,
-      pin: acc.pin?.trim() || '123456',
-      id: `ACC-${Date.now()}`,
+      username: normalizedUsername,
+      id: newId,
     };
+    delete newAcc.pin;
     setAccounts((prev) => [...prev, newAcc]);
     addAuditLog('Cấp tài khoản', 'Phân quyền', `${cleanName} (${newAcc.username})`);
     showToast(`Đã cấp tài khoản cho ${cleanName}`, `Vai trò: ${acc.dataScope}`);
@@ -2534,11 +2858,22 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const cleanName = sanitizeTextInput(acc.name, 100);
     const cleanUsername = sanitizeTextInput(acc.username, 60);
+    const normalizedUsername = cleanUsername.startsWith('@') ? cleanUsername : `@${cleanUsername}`;
+    const candidatePin = acc.pin?.trim() || '';
+    if (candidatePin) {
+      const pinErr = isWeakOrForbiddenPin(candidatePin, normalizedUsername);
+      if (pinErr) {
+        showToast('Mã PIN cập nhật không hợp lệ!', pinErr, 'warning');
+        return;
+      }
+      setLocalAccountPin(acc.id, candidatePin);
+    }
     const updated: UserAccount = {
       ...acc,
       name: cleanName,
-      username: cleanUsername.startsWith('@') ? cleanUsername : `@${cleanUsername}`,
+      username: normalizedUsername,
     };
+    delete updated.pin;
     setAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
     addAuditLog('Cập nhật tài khoản', 'Phân quyền', `${cleanName} (${updated.dataScope})`);
     showToast(`Đã cập nhật tài khoản ${cleanName}`, `Phạm vi: ${updated.dataScope}`);
@@ -2624,7 +2959,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setPayrollPeriods(INITIAL_PAYROLL_PERIODS);
     setBonusDeductions(INITIAL_BONUS_DEDUCTIONS);
     setSettings(INITIAL_SETTINGS);
-    setAccounts(INITIAL_ACCOUNTS);
+    setAccounts(sanitizeAccountsList(INITIAL_ACCOUNTS));
     setCurrentAccountId(INITIAL_ACCOUNTS[0].id);
     setAuditLogs(INITIAL_AUDIT_LOGS);
     setAnnouncements(INITIAL_ANNOUNCEMENTS);
@@ -2651,6 +2986,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         settings,
         accounts,
         currentAccount,
+        isLoggedOut,
+        logoutAccount,
         auditLogs,
         announcements,
         toasts,
@@ -2686,6 +3023,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         importEmployees,
         generateChecklistTasks,
         toggleChecklistTask,
+        computeEmployeeTimesheetRow,
         aggregateTimesheet,
         toggleConfirmTimesheet,
         lockTimesheetPeriod,

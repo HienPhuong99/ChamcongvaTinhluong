@@ -45,13 +45,77 @@ const MobileAppView = lazy(() =>
 );
 
 const MainShell: React.FC = () => {
-  const { activeTab, setActiveTab, toasts, dismissToast, requests, scopedEmployees, currentAccount } = useHRM();
+  const {
+    activeTab,
+    setActiveTab,
+    toasts,
+    dismissToast,
+    requests,
+    scopedEmployees,
+    currentAccount,
+    isLoggedOut,
+    accounts,
+    switchAccount,
+  } = useHRM();
   const scopedIds = new Set(scopedEmployees.map((e) => e.id));
   const pendingCount = requests.filter(
     (r) => r.status === 'Đang chờ' && scopedIds.has(r.employeeId)
   ).length;
 
   const renderActiveView = () => {
+    if (isLoggedOut) {
+      const activeAccounts = accounts.filter((a) => a.active);
+      return (
+        <div className="min-h-full flex items-center justify-center p-4 sm:p-8 bg-slate-50">
+          <div className="max-w-lg w-full bg-white rounded-2xl shadow-lg border border-slate-200 p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  Phiên làm việc đã đăng xuất hoặc tài khoản bị khoá
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Để bảo mật dữ liệu lương & nhân sự, hệ thống không tự động chuyển sang tài khoản của người khác. Vui lòng chọn tài khoản bên dưới để đăng nhập.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                Chọn tài khoản đang hoạt động ({activeAccounts.length})
+              </div>
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                {activeAccounts.map((acc) => (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() => switchAccount(acc.id)}
+                    className="w-full px-4 py-3 text-left hover:bg-blue-50/70 transition flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900 truncate">
+                        {acc.name}{' '}
+                        <span className="font-mono font-normal text-blue-600">({acc.username})</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {acc.dataScope}
+                        {acc.department ? ` · Phòng ${acc.department}` : ''}
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[11px] font-semibold shrink-0">
+                      Đăng nhập
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     switch (activeTab) {
       case 'dashboard':
         return <DashboardView />;

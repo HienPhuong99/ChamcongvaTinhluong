@@ -729,34 +729,37 @@ export const RequestsView: React.FC = () => {
                   </div>
                 </div>
               )}
-              {newType === 'Ứng lương nhanh' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Số tiền tạm ứng trước (Tối đa 30% lương cơ bản:{' '}
-                    {formatVND(
-                      Math.round(
-                        ((employees.find((e) => e.id === newEmpId)?.baseSalary ||
-                          15000000) *
-                          0.3)
-                      )
+              {newType === 'Ứng lương nhanh' && (() => {
+                const selectedEmpSalary = Math.max(
+                  0,
+                  Number(employees.find((e) => e.id === newEmpId)?.baseSalary) || 0
+                );
+                const maxAdvanceLimit =
+                  selectedEmpSalary > 0 ? Math.round(selectedEmpSalary * 0.3) : 0;
+                return (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Số tiền tạm ứng trước (Tối đa 30% lương cơ bản:{' '}
+                      {formatVND(maxAdvanceLimit)})
+                    </label>
+                    {maxAdvanceLimit <= 0 ? (
+                      <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-800">
+                        Nhân viên này chưa được khai lương cơ bản (0đ) nên hạn mức ứng lương là 0 ₫.
+                      </div>
+                    ) : (
+                      <input
+                        type="number"
+                        step={500000}
+                        min={0}
+                        max={maxAdvanceLimit}
+                        value={newAdvanceAmount}
+                        onChange={(e) => setNewAdvanceAmount(Number(e.target.value))}
+                        className="w-full px-3.5 py-2 rounded-xl border border-emerald-300 bg-emerald-50/40 text-xs font-bold text-emerald-800"
+                      />
                     )}
-                    )
-                  </label>
-                  <input
-                    type="number"
-                    step={500000}
-                    min={500000}
-                    max={Math.round(
-                      ((employees.find((e) => e.id === newEmpId)?.baseSalary ||
-                        15000000) *
-                        0.3)
-                    )}
-                    value={newAdvanceAmount}
-                    onChange={(e) => setNewAdvanceAmount(Number(e.target.value))}
-                    className="w-full px-3.5 py-2 rounded-xl border border-emerald-300 bg-emerald-50/40 text-xs font-bold text-emerald-800"
-                  />
-                </div>
-              )}
+                  </div>
+                );
+              })()}
               {newType === 'Đăng ký tăng ca' && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">

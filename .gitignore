@@ -33,3 +33,8 @@ Thumbs.db
 
 # Reference video
 ChamCongvaTinhLuong.mp4
+
+# Runtime server DB & secrets
+server/db.json
+server/db.json.tmp
+server/.qr_hmac_secret

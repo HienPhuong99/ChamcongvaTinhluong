@@ -28,6 +28,7 @@ import {
   exportToCSV,
   exportToExcel,
   formatVND,
+  getPreviousMonthPeriod,
 } from '../utils/helpers';
 
 function shiftPeriodMonth(period: string, delta: number): string {
@@ -60,7 +61,7 @@ export const PayrollView: React.FC = () => {
     setActiveTab,
   } = useHRM();
 
-  const [period, setPeriod] = useState<string>('2026-09');
+  const [period, setPeriod] = useState<string>(() => getPreviousMonthPeriod());
   const [isDeclareModalOpen, setIsDeclareModalOpen] = useState(false);
   const [declareEmpId, setDeclareEmpId] = useState('');
   const [declareAmount, setDeclareAmount] = useState(28000000);

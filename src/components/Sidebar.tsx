@@ -40,8 +40,8 @@ export const Sidebar: React.FC = () => {
     selectedAttendanceDate,
     scopedEmployees,
     currentAccount,
-    accounts,
-    switchAccount,
+    isLoggedOut,
+    logoutAccount,
     isMobileMenuOpen,
     setIsMobileMenuOpen,
   } = useHRM();
@@ -108,19 +108,17 @@ export const Sidebar: React.FC = () => {
   ];
 
   // Filter navigation items by RBAC role
-  const navGroups = allNavGroups
-    .map((g) => ({
-      ...g,
-      items: g.items.filter((item) => canAccessTab(currentAccount.roleId, item.id)),
-    }))
-    .filter((g) => g.items.length > 0);
+  const navGroups = isLoggedOut
+    ? []
+    : allNavGroups
+        .map((g) => ({
+          ...g,
+          items: g.items.filter((item) => canAccessTab(currentAccount.roleId, item.id)),
+        }))
+        .filter((g) => g.items.length > 0);
 
   const handleNextAccount = () => {
-    const activeAccs = accounts.filter((a) => a.active);
-    if (activeAccs.length === 0) return;
-    const idx = activeAccs.findIndex((a) => a.id === currentAccount.id);
-    const next = activeAccs[(idx + 1) % activeAccs.length];
-    switchAccount(next.id);
+    logoutAccount();
   };
 
   const handleSelectNav = (tab: NavTabId) => {
