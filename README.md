@@ -44,7 +44,7 @@ Trang Google Sites của hệ thống Chấm công, Xếp ca & Tính lương đ�
 - **📝 Đơn từ & Số dư phép tự tính theo thâm niên**: Duyệt đơn một chạm (`✓` / `✕`), xem lịch nghỉ toàn cửa hàng trên 1 trang lịch tháng, tự động cộng +1 ngày phép cho mỗi 5 năm thâm niên.
 - **👥 Hồ sơ Nhân sự 5 Tab & Checklist Nhận/Trả việc tự động**: Nhập/Xuất danh sách nhân viên từ Excel (`.xlsx`, `.csv`), tự động sinh danh sách công việc khi nhận người mới (Onboarding) hoặc bàn giao nghỉ việc (Offboarding).
 - **💰 Làm lương 5 bước tự động**: Tổng hợp bảng công → Chốt kỳ công → Khai lương cơ bản → Tính bảng lương tự động (BHXH 10.5%, Thuế TNCN, OT, Hoa hồng iPhone, Khấu trừ EWA & Phạt muộn) → Xuất ủy nhiệm chi Vietcombank & Phát hành phiếu lương PDF/Email.
-- **🔐 Phân quyền RBAC, Bảo mật Toàn diện (`0` lỗ hổng) & Tìm kiếm `Ctrl + K` không dấu**: Xem chi tiết tại **[`HUONG_DAN_SU_DUNG.md`](./HUONG_DAN_SU_DUNG.md)** và **[`BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md`](./BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md)**.
+- **🔐 Phân quyền RBAC, Bảo mật & Tìm kiếm `Ctrl + K` không dấu**: Xem chi tiết tại **[`HUONG_DAN_SU_DUNG.md`](./HUONG_DAN_SU_DUNG.md)**.
 
 ---
 

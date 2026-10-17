@@ -216,6 +216,4 @@ Chuyển tuần tự qua 5 bước khép kín chỉ trên một màn hình:
    - **4 nút chuyển nhanh (`Chấm công` · `Mã QR` · `Gửi đơn` · `Phiếu lương`)**: Nằm ngay đầu màn hình Mobile giúp chuyển tác vụ tức thì.
    - **Menu ngăn kéo trượt (`☰`) & Thanh điều hướng đáy 5 mục**: Khi dùng trình duyệt điện thoại, bấm nút **`☰`** góc trên bên trái để mở toàn bộ 14 phân hệ hoặc dùng 5 nút cố định dưới đáy màn hình (`Ca trực`, `Điểm danh`, `Chấm công`, `Đơn từ`, `Bảng lương`).
 
-> 📄 **Xem thêm Báo cáo Kiểm thử Đa nền tảng, Phân tích Đối thủ & Kiểm toán Bảo mật chi tiết tại**: [`BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md`](./BAO_CAO_KIEM_THU_BAO_MAT_VA_NANG_CAP_2026.md).
-
 
