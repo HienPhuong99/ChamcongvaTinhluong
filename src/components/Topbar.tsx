@@ -9,10 +9,11 @@ import {
   Globe,
   Menu,
   AlertTriangle,
+  Lock,
   X,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
-import { getInitials } from '../utils/helpers';
+import { canManageSettings, getInitials } from '../utils/helpers';
 import { GoogleSitesModal } from './GoogleSitesModal';
 import { ExpoGoModal } from './ExpoGoModal';
 
@@ -27,6 +28,8 @@ export const Topbar: React.FC = () => {
     scopedEmployees,
     accounts,
     currentAccount,
+    pendingAuthAccountId,
+    setPendingAuthAccountId,
     switchAccount,
     resetDemoData,
   } = useHRM();
@@ -34,11 +37,25 @@ export const Topbar: React.FC = () => {
   const [isGoogleSitesOpen, setIsGoogleSitesOpen] = useState(false);
   const [isExpoGoOpen, setIsExpoGoOpen] = useState(false);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [pinInput, setPinInput] = useState('');
 
   const scopedIds = new Set(scopedEmployees.map((e) => e.id));
   const pendingCount = requests.filter(
     (r) => r.status === 'Đang chờ' && scopedIds.has(r.employeeId)
   ).length;
+
+  const pendingTargetAccount = pendingAuthAccountId
+    ? accounts.find((a) => a.id === pendingAuthAccountId)
+    : null;
+
+  const handleConfirmAccountSwitch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingAuthAccountId) return;
+    const ok = switchAccount(pendingAuthAccountId, pinInput);
+    if (ok) {
+      setPinInput('');
+    }
+  };
 
   return (
     <>
@@ -135,7 +152,10 @@ export const Topbar: React.FC = () => {
             <select
               aria-label="Chọn tài khoản phân quyền"
               value={currentAccount.id}
-              onChange={(e) => switchAccount(e.target.value)}
+              onChange={(e) => {
+                setPinInput('');
+                switchAccount(e.target.value);
+              }}
               className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer max-w-[180px] 2xl:max-w-[240px] truncate"
             >
               {accounts.map((acc) => (
@@ -162,14 +182,16 @@ export const Topbar: React.FC = () => {
             )}
           </button>
 
-          {/* Reset demo data button (opens confirmation modal) */}
-          <button
-            onClick={() => setIsResetConfirmOpen(true)}
-            title="Khôi phục dữ liệu mẫu mặc định"
-            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
+          {/* Reset demo data button (only visible to super_admin) */}
+          {canManageSettings(currentAccount.roleId) && (
+            <button
+              onClick={() => setIsResetConfirmOpen(true)}
+              title="Khôi phục dữ liệu mẫu mặc định (Chỉ Quản trị cao nhất)"
+              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
 
           {/* Profile Pill */}
           <div
@@ -182,6 +204,105 @@ export const Topbar: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* PIN / Password Authentication Modal when switching account */}
+      {pendingTargetAccount && (
+        <div
+          onClick={() => {
+            setPendingAuthAccountId(null);
+            setPinInput('');
+          }}
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+        >
+          <form
+            onSubmit={handleConfirmAccountSwitch}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-5 animate-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600 shrink-0">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Xác thực chuyển đổi tài khoản
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Nhập mã PIN bảo mật để đăng nhập vào tài khoản đã chọn
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingAuthAccountId(null);
+                  setPinInput('');
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="mt-3.5 p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-700 space-y-1">
+              <div className="font-bold text-slate-900">
+                {pendingTargetAccount.name}{' '}
+                <span className="font-mono text-blue-600 font-normal">
+                  ({pendingTargetAccount.username})
+                </span>
+              </div>
+              <div className="text-slate-500">
+                Vai trò: <span className="font-semibold">{pendingTargetAccount.dataScope}</span>
+                {pendingTargetAccount.department ? ` · Phòng ${pendingTargetAccount.department}` : ''}
+              </div>
+            </div>
+
+            <div className="mt-3.5">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Mã PIN / Mật khẩu tài khoản
+              </label>
+              <input
+                type="password"
+                autoFocus
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="Nhập mã PIN (Mặc định: 123456)"
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-blue-600"
+              />
+              <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Mã PIN mặc định hệ thống: <code className="font-mono font-bold text-slate-700">123456</code></span>
+                <button
+                  type="button"
+                  onClick={() => setPinInput(pendingTargetAccount.pin || '123456')}
+                  className="text-blue-600 hover:underline font-semibold"
+                >
+                  Điền nhanh PIN mẫu
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingAuthAccountId(null);
+                  setPinInput('');
+                }}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
+              >
+                Huỷ bỏ
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition shadow-xs"
+              >
+                Xác thực & Chuyển tài khoản
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Confirmation Modal for Reset Demo Data */}
       {isResetConfirmOpen && (

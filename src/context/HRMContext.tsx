@@ -110,6 +110,7 @@ export interface HRMContextType {
   isSyncingBackend: boolean;
   lastSyncedAt: string | null;
   syncNowWithBackend: () => Promise<boolean>;
+  pullStateFromBackend: () => Promise<boolean>;
   // Modals & Responsive Drawer
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
@@ -119,8 +120,10 @@ export interface HRMContextType {
   setIsDoorQrModalOpen: (open: boolean) => void;
   selectedEmployeeId: string | null;
   setSelectedEmployeeId: (id: string | null) => void;
+  pendingAuthAccountId: string | null;
+  setPendingAuthAccountId: (id: string | null) => void;
   // Actions
-  switchAccount: (accountId: string) => void;
+  switchAccount: (accountId: string, pinOrPassword?: string) => boolean;
   assignShift: (employeeId: string, date: string, shiftCode: ShiftCode | null) => void;
   bulkAssignShifts: (employeeIds: string[], dates: string[], shiftCode: ShiftCode | null) => void;
   autoScheduleWeekWithAI: (dates: string[]) => { assignedCount: number; skippedLeaveCount: number };
@@ -184,7 +187,18 @@ export interface HRMContextType {
 
 export const STORAGE_KEY = 'phuonghihi_hrm_state_v2';
 const SYNC_CHANNEL_NAME = 'phuonghihi_hrm_sync_channel_v2';
-const API_SECRET_TOKEN = 'PHUONGHIHI_API_SECRET_2026';
+
+function getConfiguredApiToken(settingsToken?: string): string {
+  if (settingsToken && settingsToken.trim()) return settingsToken.trim();
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem('phuonghihi_api_secret_token') || '';
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return '';
+}
 
 const HRMContext = createContext<HRMContextType | undefined>(undefined);
 
@@ -272,9 +286,15 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isDoorQrModalOpen, setIsDoorQrModalOpen] = useState(false);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [pendingAuthAccountId, setPendingAuthAccountId] = useState<string | null>(null);
 
+  // Safe fallback (Issue D5): if currentAccountId is locked, fall back to a least-privilege active account, NEVER escalating to super_admin
   const currentAccount = useMemo(
-    () => accounts.find((a) => a.id === currentAccountId && a.active) || accounts[0],
+    () =>
+      accounts.find((a) => a.id === currentAccountId && a.active) ||
+      accounts.find((a) => a.active && a.roleId === 'employee') ||
+      accounts.find((a) => a.active && a.roleId !== 'super_admin') ||
+      accounts[0],
     [accounts, currentAccountId]
   );
 
@@ -491,9 +511,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => broadcastAndPersist('announcements', announcements), [announcements, broadcastAndPersist]);
   useEffect(() => savePersisted('lastSyncedAt', lastSyncedAt), [lastSyncedAt]);
 
-  // Sync with backend REST API (/api/state) or Google Sheets Web App
+  // Push state to backend REST API (/api/state) or Google Sheets Web App
   const syncNowWithBackend = useCallback(async (): Promise<boolean> => {
     setIsSyncingBackend(true);
+    const apiToken = getConfiguredApiToken(settings.apiSecretToken);
     const payload = {
       employees,
       shiftAssignments,
@@ -507,7 +528,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       accounts,
       auditLogs: auditLogs.slice(0, 100),
       announcements,
-      updatedAt: new Date().toISOString(),
+      exportedAt: new Date().toISOString(),
     };
 
     let syncedOk = false;
@@ -516,7 +537,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Phuonghihi-Token': API_SECRET_TOKEN,
+          ...(apiToken ? { 'X-Phuonghihi-Token': apiToken } : {}),
         },
         body: JSON.stringify(payload),
       });
@@ -532,19 +553,20 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       settings.googleSheetsWebAppUrl.startsWith('https://script.google.com/')
     ) {
       try {
-        await fetch(settings.googleSheetsWebAppUrl, {
+        const gsRes = await fetch(settings.googleSheetsWebAppUrl, {
           method: 'POST',
-          mode: 'no-cors',
           headers: {
             'Content-Type': 'text/plain;charset=utf-8',
           },
           body: JSON.stringify({
-            action: 'syncAll',
-            token: API_SECRET_TOKEN,
-            payload,
+            action: 'SYNC_FULL_STATE',
+            token: apiToken,
+            state: payload,
           }),
         });
-        syncedOk = true;
+        if (gsRes.ok) {
+          syncedOk = true;
+        }
       } catch {
         // ignore network error in offline environment
       }
@@ -555,7 +577,9 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       minute: '2-digit',
       second: '2-digit',
     });
-    setLastSyncedAt(`${nowStamp} ${formatIsoToVN(getTodayIsoDate())}`);
+    if (syncedOk) {
+      setLastSyncedAt(`${nowStamp} ${formatIsoToVN(getTodayIsoDate())}`);
+    }
     setIsSyncingBackend(false);
     return syncedOk;
   }, [
@@ -572,6 +596,90 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     auditLogs,
     announcements,
   ]);
+
+  // Pull state from backend REST API (/api/state) to synchronize across devices (Issue C1)
+  const pullStateFromBackend = useCallback(async (): Promise<boolean> => {
+    setIsSyncingBackend(true);
+    const apiToken = getConfiguredApiToken(settings.apiSecretToken);
+    let pulledOk = false;
+    try {
+      const res = await fetch('/api/state', {
+        method: 'GET',
+        headers: {
+          ...(apiToken ? { 'X-Phuonghihi-Token': apiToken } : {}),
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const remote = data && typeof data === 'object' && data.state ? data.state : data;
+        if (remote && typeof remote === 'object') {
+          isApplyingRemoteUpdate.current = true;
+          if (Array.isArray(remote.employees) && remote.employees.length > 0) {
+            setEmployees(remote.employees);
+          }
+          if (Array.isArray(remote.shiftAssignments)) {
+            setShiftAssignments(remote.shiftAssignments);
+          }
+          if (Array.isArray(remote.attendanceRecords)) {
+            setAttendanceRecords(remote.attendanceRecords);
+          }
+          if (Array.isArray(remote.requests)) {
+            setRequests(remote.requests);
+          }
+          if (Array.isArray(remote.leaveBalances)) {
+            setLeaveBalances(remote.leaveBalances);
+          }
+          if (Array.isArray(remote.timesheets)) {
+            setTimesheets(remote.timesheets);
+          }
+          const remotePeriods = remote.payrollPeriods || remote.payrollPeriodStates;
+          if (Array.isArray(remotePeriods)) {
+            setPayrollPeriods(remotePeriods);
+          }
+          const remoteBonuses = remote.bonusDeductions || remote.payrollOverrides;
+          if (Array.isArray(remoteBonuses)) {
+            setBonusDeductions(remoteBonuses);
+          }
+          if (remote.settings && typeof remote.settings === 'object') {
+            setSettings((prev) => ({ ...prev, ...remote.settings }));
+          }
+          const remoteAccounts = remote.accounts || remote.systemUsers;
+          if (Array.isArray(remoteAccounts) && remoteAccounts.length > 0) {
+            setAccounts(remoteAccounts);
+          }
+          if (Array.isArray(remote.auditLogs)) {
+            setAuditLogs(remote.auditLogs);
+          }
+          if (Array.isArray(remote.announcements)) {
+            setAnnouncements(remote.announcements);
+          }
+          setTimeout(() => {
+            isApplyingRemoteUpdate.current = false;
+          }, 50);
+          pulledOk = true;
+        }
+      }
+    } catch {
+      // Server unreachable
+    }
+    const nowStamp = new Date().toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    if (pulledOk) {
+      setLastSyncedAt(`${nowStamp} ${formatIsoToVN(getTodayIsoDate())}`);
+      showToast('Đã tải dữ liệu mới nhất từ Server!', `Đồng bộ lúc ${nowStamp}`);
+    } else {
+      showToast(
+        'Không thể tải dữ liệu từ Server!',
+        'Vui lòng kiểm tra kết nối máy chủ hoặc khoá API Token trong mục Cài đặt.',
+        'warning'
+      );
+    }
+    setIsSyncingBackend(false);
+    return pulledOk;
+  }, [settings.apiSecretToken, showToast]);
 
   // Global Ctrl+K shortcut
   useEffect(() => {
@@ -624,26 +732,49 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [formatNowTimestamp, currentAccount.email]
   );
 
-  const switchAccount = (accountId: string) => {
+  // Authenticated account switching (Issue B1): require PIN/password when switching accounts
+  const switchAccount = (accountId: string, pinOrPassword?: string): boolean => {
     const target = accounts.find((a) => a.id === accountId);
-    if (!target) return;
+    if (!target) return false;
     if (!target.active) {
       showToast(
         `Tài khoản ${target.name} đang bị khoá!`,
         'Vui lòng mở khoá tài khoản trong mục Phân quyền trước khi chuyển đổi.',
         'warning'
       );
-      return;
+      return false;
     }
+    if (accountId === currentAccount.id) {
+      setPendingAuthAccountId(null);
+      return true;
+    }
+    const expectedPin = target.pin || '123456';
+    const cleanInput = (pinOrPassword || '').trim();
+    if (!cleanInput) {
+      setPendingAuthAccountId(accountId);
+      return false;
+    }
+    if (cleanInput !== expectedPin && cleanInput !== target.username) {
+      showToast(
+        'Mật khẩu / Mã PIN xác thực không đúng!',
+        `Không thể chuyển sang tài khoản ${target.name}.`,
+        'warning'
+      );
+      return false;
+    }
+
+    setPendingAuthAccountId(null);
     setCurrentAccountId(accountId);
     if (target.roleId === 'door_kiosk') {
       setIsDoorQrModalOpen(true);
     }
+    addAuditLog('Đăng nhập / Chuyển tài khoản', 'Phân quyền', `${target.name} (${target.username})`);
     showToast(
-      `Đã chuyển sang tài khoản: ${target.name}`,
+      `Đã xác thực & chuyển sang: ${target.name}`,
       `Phạm vi dữ liệu: ${target.dataScope}${target.department ? ` (${target.department})` : ''}`,
       'info'
     );
+    return true;
   };
 
   const hasApprovedLeaveOnDate = useCallback(
@@ -831,13 +962,27 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const emp = employees.find((e) => e.id === employeeId);
     const targetDate = date || getTodayIsoDate();
 
-    // Validate attendance method against system settings
-    if (method === 'GPS' && !settings.gpsEnabled) {
-      showToast('Chấm công GPS đang tạm tắt!', 'Quản trị viên đã tắt hình thức chấm công GPS trong Cài đặt.', 'warning');
-      return;
+    // Validate attendance method against system settings (Issues B3, C8)
+    if (method === 'GPS') {
+      if (!settings.gpsEnabled) {
+        showToast('Chấm công GPS đang tạm tắt!', 'Quản trị viên đã tắt hình thức chấm công GPS trong Cài đặt.', 'warning');
+        return;
+      }
+      if (settings.requirePhotoOnGps && !photoUrl) {
+        showToast(
+          'Bắt buộc chụp ảnh selfie khi chấm công GPS!',
+          'Vui lòng chụp ảnh xác thực khuôn mặt tại quầy trước khi bấm Chấm công GPS.',
+          'warning'
+        );
+        return;
+      }
     }
     if (method === 'QR tại cửa' && !settings.qrEnabled) {
       showToast('Chấm công Mã QR đang tạm tắt!', 'Quản trị viên đã tắt hình thức chấm công QR trong Cài đặt.', 'warning');
+      return;
+    }
+    if (method === 'Máy vân tay' && !settings.biometricEnabled) {
+      showToast('Đồng bộ Máy chấm công vân tay đang tắt!', 'Vui lòng bật tích hợp máy vân tay trong mục Cài đặt.', 'warning');
       return;
     }
     if (method === 'Từ xa') {
@@ -873,23 +1018,31 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ).padStart(2, '0')}`;
     const cleanNote = note ? sanitizeTextInput(note, 300) : undefined;
 
+    // Issue D3: Check if employee actually has a scheduled shift on targetDate
+    const scheduledAssignment = shiftAssignments.find(
+      (a) => a.employeeId === employeeId && a.date === targetDate
+    );
+    const hasScheduledShift = Boolean(existingForDate?.shiftCode || scheduledAssignment?.shiftCode);
     const assignedShift =
-      existingForDate?.shiftCode ||
-      shiftAssignments.find((a) => a.employeeId === employeeId && a.date === targetDate)?.shiftCode ||
-      'hanh_chinh';
+      existingForDate?.shiftCode || scheduledAssignment?.shiftCode || 'hanh_chinh';
     const shiftTpl = shiftTemplates.find((s) => s.code === assignedShift) || shiftTemplates[0];
 
     const isCheckingOut = Boolean(existingForDate?.checkIn && !existingForDate?.checkOut);
     const nextCheckIn = existingForDate?.checkIn || timeStr;
     const nextCheckOut = isCheckingOut ? timeStr : existingForDate?.checkOut;
 
-    const { lateMinutes, otHours, status } = calculateCheckInLateAndOt({
+    const calcResult = calculateCheckInLateAndOt({
       checkIn: nextCheckIn,
       checkOut: nextCheckOut,
       shiftStart: shiftTpl.startTime,
       shiftEnd: shiftTpl.endTime,
       graceMinutes: 0,
     });
+
+    // If employee had no scheduled shift on this date (e.g. weekend extra shift), do NOT penalize as late (Issue D3)
+    const lateMinutes = hasScheduledShift ? calcResult.lateMinutes : 0;
+    const otHours = calcResult.otHours;
+    const status: AttendanceRecord['status'] = hasScheduledShift ? calcResult.status : 'Đúng giờ';
 
     setAttendanceRecords((prev) => {
       const existing = prev.find((r) => r.employeeId === employeeId && r.date === targetDate);
@@ -908,7 +1061,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 distanceMeters,
                 gpsAccuracy,
                 photoUrl: photoUrl || r.photoUrl,
-                note: cleanNote || r.note,
+                note:
+                  cleanNote ||
+                  r.note ||
+                  (!hasScheduledShift ? 'Làm thêm ngoài lịch phân ca' : undefined),
               }
             : r
         );
@@ -929,7 +1085,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           distanceMeters,
           gpsAccuracy,
           photoUrl,
-          note: cleanNote,
+          note: cleanNote || (!hasScheduledShift ? 'Làm thêm ngoài lịch phân ca' : undefined),
         },
       ];
     });
@@ -942,7 +1098,11 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(
       `${isCheckingOut ? 'Chấm công ra' : 'Chấm công vào'} thành công lúc ${timeStr}!`,
       `${emp?.name || employeeId} · ${method} (${distanceMeters}m)${
-        lateMinutes > 0 ? ` · Đi muộn ${lateMinutes} phút` : ' · Đúng giờ'
+        !hasScheduledShift
+          ? ' · Ngoài lịch phân ca (Không tính muộn)'
+          : lateMinutes > 0
+          ? ` · Đi muộn ${lateMinutes} phút`
+          : ' · Đúng giờ'
       }`
     );
   };
@@ -1312,11 +1472,11 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast('Số tiền ứng không hợp lệ!', 'Vui lòng nhập số tiền ứng lớn hơn 0đ.', 'warning');
         return false;
       }
-      const maxAdvance = Math.max(3000000, Math.round(((emp?.baseSalary || 15000000) * 0.5)));
+      const maxAdvance = Math.round((emp?.baseSalary || 15000000) * 0.3);
       if (amt > maxAdvance) {
         showToast(
-          'Vượt hạn mức ứng lương nhanh (EWA)!',
-          `Hạn mức ứng tối đa là ${maxAdvance.toLocaleString('vi-VN')} ₫.`,
+          'Vượt hạn mức ứng lương nhanh (EWA 30%)!',
+          `Hạn mức ứng tối đa (30% lương cơ bản) là ${maxAdvance.toLocaleString('vi-VN')} ₫.`,
           'warning'
         );
         return false;
@@ -1403,6 +1563,15 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
+    if (emp.id === 'NV0000' && emp.status === 'Đã nghỉ') {
+      showToast(
+        'Không thể cho nghỉ việc Quản trị tối cao (NV0000)!',
+        'Tài khoản Chủ chuỗi cửa hàng phuonghihi luôn phải ở trạng thái Đang làm việc.',
+        'warning'
+      );
+      return;
+    }
+
     const isSelfLimitedEdit = !canManageHR(currentAccount.roleId) && existingEmp;
 
     const sanitizedEmp: Employee = {
@@ -1429,6 +1598,12 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return [sanitizedEmp, ...prev];
     });
+
+    if (sanitizedEmp.status === 'Đã nghỉ') {
+      setAccounts((prev) =>
+        prev.map((a) => (a.employeeId === sanitizedEmp.id ? { ...a, active: false } : a))
+      );
+    }
 
     // Ensure new employee gets a leave balance entry
     if (!existingEmp) {
@@ -1463,6 +1638,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const target = employees.find((e) => e.id === employeeId);
     if (!target) return;
+    if (employeeId === 'NV0000') {
+      showToast('Không thể chuyển trạng thái Đã nghỉ cho Chủ chuỗi / Quản trị tối cao (NV0000)!', undefined, 'warning');
+      return;
+    }
     if (employeeId === currentAccount.employeeId) {
       showToast('Không thể xoá hồ sơ của tài khoản đang đăng nhập!', undefined, 'warning');
       return;
@@ -1640,6 +1819,77 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const computeEmployeeTimesheetRow = useCallback(
+    (
+      employeeId: string,
+      period: string,
+      existingRow?: MonthlyTimesheetRow,
+      confirmedOverride?: boolean
+    ): MonthlyTimesheetRow => {
+      const standardDays = settings.standardWorkDays || 22;
+      const periodAtt = attendanceRecords.filter(
+        (r) => r.employeeId === employeeId && r.date.startsWith(period)
+      );
+      const checkedInRecords = periodAtt.filter((r) => Boolean(r.checkIn));
+      const absentRecords = periodAtt.filter((r) => !r.checkIn && r.status === 'Vắng');
+      const liveLateRecords = checkedInRecords.filter((r) => r.lateMinutes > 0);
+      const liveLateMins = liveLateRecords.reduce((s, r) => s + r.lateMinutes, 0);
+      const liveOtFromAtt = checkedInRecords.reduce((s, r) => s + (r.otHours || 0), 0);
+
+      const approvedLeaves = requests.filter(
+        (r) =>
+          r.employeeId === employeeId &&
+          r.status === 'Đã duyệt' &&
+          (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm') &&
+          derivePeriodFromDate(r.startDate, period) === period
+      );
+      const approvedLeaveDays = approvedLeaves.reduce(
+        (s, r) => s + (r.days || calculateInclusiveDays(r.startDate, r.endDate)),
+        0
+      );
+
+      const approvedOtReqs = requests.filter(
+        (r) =>
+          r.employeeId === employeeId &&
+          r.status === 'Đã duyệt' &&
+          r.type === 'Đăng ký tăng ca' &&
+          derivePeriodFromDate(r.startDate, period) === period
+      );
+      const approvedOtHours = approvedOtReqs.reduce((s, r) => s + (r.otHours || 0), 0);
+
+      // If there are daily attendance records in this period (or no historical snapshot exists),
+      // compute strictly from real attendanceRecords and approved requests.
+      if (periodAtt.length > 0 || !existingRow) {
+        const actualDays = checkedInRecords.reduce((sum, r) => {
+          const tpl = shiftTemplates.find((s) => s.code === r.shiftCode);
+          return sum + (tpl ? tpl.workDays : 1);
+        }, 0);
+        return {
+          employeeId,
+          period,
+          standardDays,
+          actualDays,
+          paidLeaveDays: approvedLeaveDays,
+          absentDays: absentRecords.length,
+          lateCount: liveLateRecords.length,
+          lateMinutes: liveLateMins,
+          otHours: Math.max(liveOtFromAtt, approvedOtHours),
+          confirmed: confirmedOverride ?? existingRow?.confirmed ?? false,
+        };
+      }
+
+      // Historical closed periods (e.g. 2026-08, 2026-09) that only have monthly summary rows
+      return {
+        ...existingRow,
+        standardDays,
+        paidLeaveDays: Math.max(existingRow.paidLeaveDays, approvedLeaveDays),
+        otHours: Math.max(existingRow.otHours, approvedOtHours),
+        confirmed: confirmedOverride ?? existingRow.confirmed,
+      };
+    },
+    [attendanceRecords, requests, settings.standardWorkDays, shiftTemplates]
+  );
+
   const aggregateTimesheet = (period: string) => {
     const periodState = payrollPeriods.find((p) => p.period === period);
     if (periodState?.step2TimesheetLocked || periodState?.locked) {
@@ -1651,75 +1901,16 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    const standardDays = settings.standardWorkDays || 22;
-
     setTimesheets((prev) => {
       const updatedRows: MonthlyTimesheetRow[] = [];
       const existingMap = new Map(
         prev.filter((r) => r.period === period).map((r) => [r.employeeId, r])
       );
 
-      employees.forEach((emp, idx) => {
+      employees.forEach((emp) => {
         if (emp.status === 'Đã nghỉ') return;
         const currentRow = existingMap.get(emp.id);
-
-        // Calculate live deltas from attendanceRecords and approved requests in this period
-        const periodAtt = attendanceRecords.filter(
-          (r) => r.employeeId === emp.id && r.date.startsWith(period)
-        );
-        const checkedInRecords = periodAtt.filter((r) => Boolean(r.checkIn));
-        const liveLateRecords = checkedInRecords.filter((r) => r.lateMinutes > 0);
-        const liveLateMins = liveLateRecords.reduce((s, r) => s + r.lateMinutes, 0);
-        const liveOtFromAtt = checkedInRecords.reduce((s, r) => s + (r.otHours || 0), 0);
-
-        const approvedLeaves = requests.filter(
-          (r) =>
-            r.employeeId === emp.id &&
-            r.status === 'Đã duyệt' &&
-            r.type === 'Nghỉ phép năm' &&
-            derivePeriodFromDate(r.startDate, period) === period
-        );
-        const approvedLeaveDays = approvedLeaves.reduce(
-          (s, r) => s + (r.days || calculateInclusiveDays(r.startDate, r.endDate)),
-          0
-        );
-
-        const approvedOtReqs = requests.filter(
-          (r) =>
-            r.employeeId === emp.id &&
-            r.status === 'Đã duyệt' &&
-            r.type === 'Đăng ký tăng ca' &&
-            derivePeriodFromDate(r.startDate, period) === period
-        );
-        const approvedOtHours = approvedOtReqs.reduce((s, r) => s + (r.otHours || 0), 0);
-
-        if (currentRow) {
-          updatedRows.push({
-            ...currentRow,
-            standardDays,
-            paidLeaveDays: Math.max(currentRow.paidLeaveDays, approvedLeaveDays),
-            lateCount: Math.max(currentRow.lateCount, liveLateRecords.length),
-            lateMinutes: Math.max(currentRow.lateMinutes, liveLateMins),
-            otHours: Math.max(currentRow.otHours, liveOtFromAtt, approvedOtHours),
-          });
-        } else {
-          updatedRows.push({
-            employeeId: emp.id,
-            period,
-            standardDays,
-            actualDays: 20 + (idx % 3) * 0.5,
-            paidLeaveDays: Math.max(idx % 3 === 0 ? 1 : 0, approvedLeaveDays),
-            absentDays: idx % 7 === 0 ? 1 : 0,
-            lateCount: Math.max(idx % 4, liveLateRecords.length),
-            lateMinutes: Math.max((idx % 4) * 14, liveLateMins),
-            otHours: Math.max(
-              idx % 5 === 0 ? 3 : idx % 3 === 0 ? 2 : 0,
-              liveOtFromAtt,
-              approvedOtHours
-            ),
-            confirmed: false,
-          });
-        }
+        updatedRows.push(computeEmployeeTimesheetRow(emp.id, period, currentRow));
       });
 
       const otherPeriods = prev.filter((r) => r.period !== period);
@@ -1748,7 +1939,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addAuditLog('Tổng hợp công', 'Bảng công', `Kỳ ${period}`);
     showToast(
       `Đã tổng hợp bảng công kỳ ${period}!`,
-      'Tự động đối chiếu ngày công thực tế, phép năm đã duyệt, đi muộn và giờ tăng ca (OT).'
+      'Tự động đối chiếu ngày công thực tế từ dữ liệu chấm công, phép năm đã duyệt, đi muộn và giờ tăng ca (OT).'
     );
   };
 
@@ -1776,21 +1967,9 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : row
         );
       }
-      const idx = employees.findIndex((e) => e.id === employeeId);
       return [
         ...prev,
-        {
-          employeeId,
-          period,
-          standardDays: settings.standardWorkDays || 22,
-          actualDays: 20 + ((idx >= 0 ? idx : 0) % 3) * 0.5,
-          paidLeaveDays: (idx >= 0 ? idx : 0) % 3 === 0 ? 1 : 0,
-          absentDays: 0,
-          lateCount: 0,
-          lateMinutes: 0,
-          otHours: 0,
-          confirmed: true,
-        },
+        computeEmployeeTimesheetRow(employeeId, period, undefined, true),
       ];
     });
 
@@ -1893,19 +2072,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const normalizedPeriod = normalizePeriodKey(period);
 
       return activeEmps.map((emp) => {
-        const idx = employees.findIndex((x) => x.id === emp.id);
-        const ts = timesheets.find((t) => t.employeeId === emp.id && t.period === period) || {
-          employeeId: emp.id,
-          period,
-          standardDays: settings.standardWorkDays || 22,
-          actualDays: 20 + ((idx >= 0 ? idx : 0) % 3) * 0.5,
-          paidLeaveDays: (idx >= 0 ? idx : 0) % 3 === 0 ? 1 : 0,
-          absentDays: 0,
-          lateCount: 0,
-          lateMinutes: 0,
-          otHours: 0,
-          confirmed: false,
-        };
+        const existingTs = timesheets.find((t) => t.employeeId === emp.id && t.period === period);
+        const ts = computeEmployeeTimesheetRow(emp.id, period, existingTs);
 
         const hasDeclaredSalary = emp.baseSalary > 0;
         const baseSalary = hasDeclaredSalary ? emp.baseSalary : 0;
@@ -1943,10 +2111,45 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
+        // Split OT hours into Weekend OT vs Weekday OT
+        const weekendAttOt = attendanceRecords
+          .filter((r) => {
+            if (r.employeeId !== emp.id || !r.date.startsWith(period) || !r.otHours) return false;
+            const d = new Date(`${r.date}T00:00:00`);
+            const dow = d.getDay();
+            return dow === 0 || dow === 6;
+          })
+          .reduce((s, r) => s + r.otHours, 0);
+
+        const weekendReqOt = requests
+          .filter((r) => {
+            if (
+              r.employeeId !== emp.id ||
+              r.status !== 'Đã duyệt' ||
+              r.type !== 'Đăng ký tăng ca' ||
+              derivePeriodFromDate(r.startDate, period) !== period ||
+              !r.otHours
+            ) {
+              return false;
+            }
+            const iso = normalizeToIsoDate(r.startDate);
+            if (!iso) return false;
+            const dow = new Date(`${iso}T00:00:00`).getDay();
+            return dow === 0 || dow === 6;
+          })
+          .reduce((s, r) => s + (r.otHours || 0), 0);
+
+        const weekendOtHours = Math.min(ts.otHours, Math.max(weekendAttOt, weekendReqOt));
+        const weekdayOtHours = Math.max(0, ts.otHours - weekendOtHours);
+
         const payableDays = Math.min(standardDays, Math.max(0, ts.actualDays + ts.paidLeaveDays));
         const proRatedSalary = hasDeclaredSalary ? Math.round(dailySalary * payableDays) : 0;
         const otAmount = hasDeclaredSalary
-          ? Math.round(ts.otHours * hourlySalary * settings.otMultiplierWeekday)
+          ? Math.round(
+              hourlySalary *
+                (weekdayOtHours * settings.otMultiplierWeekday +
+                  weekendOtHours * settings.otMultiplierWeekend)
+            )
           : 0;
 
         const empBonuses = bonusDeductions
@@ -2012,7 +2215,16 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       });
     },
-    [scopedEmployees, employees, payrollPeriods, timesheets, settings, bonusDeductions]
+    [
+      scopedEmployees,
+      payrollPeriods,
+      timesheets,
+      settings,
+      bonusDeductions,
+      attendanceRecords,
+      requests,
+      computeEmployeeTimesheetRow,
+    ]
   );
 
   const calculatePayrollForPeriod = (period: string) => {
@@ -2035,17 +2247,32 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    setPayrollPeriods((prev) =>
-      prev.map((p) =>
-        p.period === period
-          ? { ...p, step3SalariesDeclared: true, step4PayrollCalculated: true }
-          : p
-      )
-    );
+    setPayrollPeriods((prev) => {
+      const exists = prev.some((p) => p.period === period);
+      if (exists) {
+        return prev.map((p) =>
+          p.period === period
+            ? { ...p, step3SalariesDeclared: true, step4PayrollCalculated: true }
+            : p
+        );
+      }
+      return [
+        ...prev,
+        {
+          period,
+          step1TimesheetAggregated: true,
+          step2TimesheetLocked: false,
+          step3SalariesDeclared: true,
+          step4PayrollCalculated: true,
+          step5PayslipsPublished: false,
+          locked: false,
+        },
+      ];
+    });
     addAuditLog('Tính lương', 'Bảng lương', `${period}`);
     showToast(
       `Đã tính xong bảng lương kỳ ${period}!`,
-      'Đã tự động tính BHXH (10.5%), Thuế TNCN 7 bậc, Tăng ca và Khấu trừ đi muộn.'
+      'Đã tự động tính BHXH (10.5%), Thuế TNCN 7 bậc, Tăng ca (ngày thường/cuối tuần) và Khấu trừ đi muộn.'
     );
   };
 
@@ -2292,6 +2519,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...acc,
       name: cleanName,
       username: cleanUsername.startsWith('@') ? cleanUsername : `@${cleanUsername}`,
+      pin: acc.pin?.trim() || '123456',
       id: `ACC-${Date.now()}`,
     };
     setAccounts((prev) => [...prev, newAcc]);
@@ -2371,6 +2599,10 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetDemoData = () => {
+    if (!canManageSettings(currentAccount.roleId)) {
+      showToast('Chỉ Quản trị viên hệ thống mới được khôi phục dữ liệu mẫu!', undefined, 'warning');
+      return;
+    }
     try {
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -2427,6 +2659,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isSyncingBackend,
         lastSyncedAt,
         syncNowWithBackend,
+        pullStateFromBackend,
         isMobileMenuOpen,
         setIsMobileMenuOpen,
         isCommandPaletteOpen,
@@ -2435,6 +2668,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsDoorQrModalOpen,
         selectedEmployeeId,
         setSelectedEmployeeId,
+        pendingAuthAccountId,
+        setPendingAuthAccountId,
         switchAccount,
         assignShift,
         bulkAssignShifts,

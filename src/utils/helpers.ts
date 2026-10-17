@@ -66,12 +66,49 @@ export function sanitizeSpreadsheetValue(val: string | number | unknown): string
 }
 
 /**
- * Cryptographic-style keyed FNV-1a 64-bit hex signature for 45-second Kiosk QR tokens & Personal QR (CWE-294)
+ * Runtime-generated / environment-provided keyed FNV-1a 64-bit hex signature for Kiosk QR & Personal QR (CWE-294, B5)
+ * Avoids shipping a static secret constant in the JS bundle.
  */
-const KIOSK_QR_SECRET = 'PHUONGHIHI_123_LE_LOI_Q1_SECRET_2026';
+let cachedRuntimeQrSecret: string | null = null;
 
-export function computeKeyedSignature(payload: string): string {
-  const input = `${KIOSK_QR_SECRET}::${payload}::${KIOSK_QR_SECRET}`;
+export function getQrSigningSecret(): string {
+  if (cachedRuntimeQrSecret) return cachedRuntimeQrSecret;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const stored = window.localStorage.getItem('phuonghihi_qr_hmac_seed_v1');
+      if (stored && stored.length >= 16) {
+        cachedRuntimeQrSecret = stored;
+        return stored;
+      }
+      const bytes = new Uint8Array(16);
+      if (window.crypto && window.crypto.getRandomValues) {
+        window.crypto.getRandomValues(bytes);
+      } else {
+        for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+      }
+      const generated = Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+        .toUpperCase();
+      window.localStorage.setItem('phuonghihi_qr_hmac_seed_v1', generated);
+      cachedRuntimeQrSecret = generated;
+      return generated;
+    }
+  } catch {
+    // ignore storage access errors
+  }
+  const envSecret =
+    (typeof globalThis !== 'undefined' &&
+      (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env
+        ?.PHUONGHIHI_QR_SECRET) ||
+    `RUNTIME-QR-${new Date().getFullYear()}`;
+  cachedRuntimeQrSecret = envSecret;
+  return envSecret;
+}
+
+export function computeKeyedSignature(payload: string, customSecret?: string): string {
+  const secret = customSecret || getQrSigningSecret();
+  const input = `${secret}::${payload}::${secret}`;
   let h1 = 0xdeadbeef ^ input.length;
   let h2 = 0x41c6ce57 ^ input.length;
   for (let i = 0; i < input.length; i++) {
@@ -221,6 +258,84 @@ export function parseIsoDateLocal(isoDate: string): Date {
   return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);
 }
 
+export function addDaysToIsoDate(isoDate: string, days: number): string {
+  const dt = parseIsoDateLocal(isoDate);
+  dt.setDate(dt.getDate() + days);
+  return getTodayIsoDate(dt);
+}
+
+export function getMondayOfIsoDate(isoDate: string): string {
+  const dt = parseIsoDateLocal(isoDate);
+  const dow = dt.getDay(); // 0=Sun, 1=Mon...
+  const diffToMon = dow === 0 ? -6 : 1 - dow;
+  dt.setDate(dt.getDate() + diffToMon);
+  return getTodayIsoDate(dt);
+}
+
+export interface WeekDayColumnInfo {
+  date: string;
+  dayName: string;
+  dayNum: string;
+  monthNum: string;
+  muted?: boolean;
+}
+
+export function getWeekDaysFromMonday(
+  mondayIso: string,
+  activeMonthStr?: string
+): WeekDayColumnInfo[] {
+  const mon = getMondayOfIsoDate(mondayIso);
+  const shortDayNames = ['CN', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+  return Array.from({ length: 7 }, (_, i) => {
+    const iso = addDaysToIsoDate(mon, i);
+    const dt = parseIsoDateLocal(iso);
+    const [, mStr, dStr] = iso.split('-');
+    return {
+      date: iso,
+      dayName: shortDayNames[dt.getDay()],
+      dayNum: dStr || '01',
+      monthNum: mStr || '01',
+      muted: activeMonthStr ? mStr !== activeMonthStr : false,
+    };
+  });
+}
+
+export function getDynamicPeriods(
+  extraDateOrPeriod?: string
+): { key: string; label: string }[] {
+  const currentPeriod = getTodayIsoDate().slice(0, 7);
+  const [cy, cm] = currentPeriod.split('-').map(Number);
+  const set = new Set<string>([
+    '2026-08',
+    '2026-09',
+    '2026-10',
+    '2026-11',
+    '2026-12',
+    currentPeriod,
+  ]);
+  for (let offset = -2; offset <= 2; offset++) {
+    const dt = new Date(cy, (cm || 1) - 1 + offset, 1);
+    const p = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    set.add(p);
+  }
+  if (extraDateOrPeriod) {
+    const candidate = extraDateOrPeriod.slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(candidate)) {
+      set.add(candidate);
+    }
+  }
+  return Array.from(set)
+    .sort()
+    .reverse()
+    .map((key) => {
+      const [yStr, mStr] = key.split('-');
+      return {
+        key,
+        label: `Tháng ${parseInt(mStr || '10', 10)}/${yStr || '2026'}`,
+      };
+    });
+}
+
 export function formatVietnameseDayHeader(isoDate: string): string {
   const dt = parseIsoDateLocal(isoDate);
   const dayNames = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
@@ -252,7 +367,7 @@ export function isDateExpired(expiresAtStr?: string, todayIso = getTodayIsoDate(
 }
 
 export function normalizePeriodKey(periodStr: string): string {
-  if (!periodStr) return '2026-10';
+  if (!periodStr) return getTodayIsoDate().slice(0, 7);
   const trimmed = periodStr.trim();
   if (/^\d{4}-\d{2}$/.test(trimmed)) return trimmed;
   const slashParts = trimmed.split('/');
@@ -263,7 +378,7 @@ export function normalizePeriodKey(periodStr: string): string {
   return trimmed;
 }
 
-export function derivePeriodFromDate(dateStr: string, fallback = '2026-10'): string {
+export function derivePeriodFromDate(dateStr: string, fallback = getTodayIsoDate().slice(0, 7)): string {
   const iso = normalizeToIsoDate(dateStr);
   if (iso && iso.length >= 7) {
     return iso.slice(0, 7);
@@ -329,17 +444,23 @@ export function calculateCheckInLateAndOt(
   const startMins = parseTimeToMinutes(shiftStart) ?? 480;
   const outMins = parseTimeToMinutes(checkOut);
   const endMins = parseTimeToMinutes(shiftEnd) ?? 1050;
+  const isOvernightShift = endMins < startMins;
 
   let lateMinutes = 0;
-  if (inMins !== null && inMins > startMins + graceMinutes) {
-    lateMinutes = inMins - startMins;
+  if (inMins !== null) {
+    // Handle overnight shift check-in after midnight (e.g. 00:30 for a 22:00-06:00 shift)
+    const adjustedIn =
+      isOvernightShift && inMins < endMins + 180 ? inMins + 1440 : inMins;
+    if (adjustedIn > startMins + graceMinutes) {
+      lateMinutes = adjustedIn - startMins;
+    }
   }
 
   let otHours = 0;
   if (outMins !== null) {
     // Handle overnight shift where endMins < startMins
-    const adjustedOut = outMins < startMins && endMins < startMins ? outMins + 1440 : outMins;
-    const adjustedEnd = endMins < startMins ? endMins + 1440 : endMins;
+    const adjustedOut = outMins < startMins && isOvernightShift ? outMins + 1440 : outMins;
+    const adjustedEnd = isOvernightShift ? endMins + 1440 : endMins;
     if (adjustedOut > adjustedEnd + 15) {
       otHours = Math.round(((adjustedOut - adjustedEnd) / 60) * 2) / 2;
     }

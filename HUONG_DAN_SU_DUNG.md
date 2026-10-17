@@ -14,7 +14,7 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 | :--- | :--- | :--- |
 | **1. Web Quản trị & Cổng Nhân sự (Live HTTPS)** | **[https://hienphuong99.github.io/ChamcongvaTinhluong/](https://hienphuong99.github.io/ChamcongvaTinhluong/)** | Quản lý cửa hàng, Nhân sự (HR), Kế toán, Trưởng nhóm & Nhân viên trên máy tính/iPad |
 | **2. App Chấm Công Điện Thoại (Mobile PWA)** | **[https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile](https://hienphuong99.github.io/ChamcongvaTinhluong/?mode=mobile)** | Nhân viên mở trên trình duyệt điện thoại (Safari / Chrome) để chấm công GPS/QR, xin phép, xem phiếu lương |
-| **3. Trang Google Sites Chấm Công & Nhân Sự** | **[https://sites.google.com/view/phuonghihi-staff](https://sites.google.com/view/phuonghihi-staff)** *(Trình sửa: [Mở Editor](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit))* | Trang Google Sites chính thức dành cho nhân sự Cửa hàng `phuonghihi` |
+| **3. Trang Google Sites Chấm Công & Nhân Sự** | **[https://sites.google.com/view/phuonghihi-staff](https://sites.google.com/view/phuonghihi-staff)** *(Trình sửa: [Mở Editor](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1OwDFFthLqJKC-wHM70WszAbGweH_VCGO/edit))* | Trang Google Sites chính thức dành cho nhân sự Cửa hàng `phuonghihi` |
 | **4. Trang Google Sites Bán hàng & Kho IMEI** | **[https://sites.google.com/view/phuonghihi](https://sites.google.com/view/phuonghihi)** | Hệ thống Web Bán hàng iPhone chính hãng của Cửa hàng `phuonghihi` |
 | **5. App Native trên Điện thoại (Expo Go)** | **`exp://192.168.0.23:8081`** *(Quét mã QR bằng nút **Expo Go** trên thanh Topbar Web)* | Chạy ứng dụng React Native mượt mà trực tiếp trong app **Expo Go** (iOS / Android) |
 | **6. Kho mã nguồn GitHub** | **[https://github.com/HienPhuong99/ChamcongvaTinhluong](https://github.com/HienPhuong99/ChamcongvaTinhluong)** | Lưu trữ toàn bộ mã nguồn Web, Mobile PWA, Expo Go & Google Sheets Apps Script |
@@ -28,14 +28,14 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 - **Cổng Chấm Công, Xếp Ca & Tính Lương Nhân Viên**: **[https://sites.google.com/view/phuonghihi-staff](https://sites.google.com/view/phuonghihi-staff)**
   - Nhúng trực tiếp hệ thống Quản trị Nhân sự, Điểm danh GPS/QR & Tính lương 5 bước.
   - Trên thanh Topbar của phần mềm có nút **`Web Bán hàng`** để chuyển 1 chạm sang trang bán hàng.
-  - **Link trình chỉnh sửa (Editor)**: [https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit)
+  - **Link trình chỉnh sửa (Editor)**: [https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1OwDFFthLqJKC-wHM70WszAbGweH_VCGO/edit](https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1OwDFFthLqJKC-wHM70WszAbGweH_VCGO/edit)
 - **Cổng Bán Hàng iPhone Chính Hãng & Kho IMEI**: **[https://sites.google.com/view/phuonghihi](https://sites.google.com/view/phuonghihi)**
 
 ---
 
 ## PHẦN 2: THÔNG TIN TÀI KHOẢN ĐĂNG NHẬP & CHUYỂN ĐỔI VAI TRÒ (RBAC)
 
-Để thuận tiện tối đa cho việc vận hành và kiểm thử, hệ thống tích hợp **Bộ chuyển đổi tài khoản 1 chạm (Role Switcher)** nằm ngay góc trên bên phải thanh công cụ (biểu tượng cái khiên 🛡️ cạnh chuông thông báo) mà **không bắt buộc nhập mật khẩu rườm rà**.
+Để bảo mật phân quyền thực tế, hệ thống tích hợp **Bộ chuyển đổi tài khoản có xác thực mã PIN/Mật khẩu** nằm ngay góc trên bên phải thanh công cụ (mã PIN mặc định hệ thống: `123456`).
 
 ### 2.1. Danh sách 6 Tài khoản Phân quyền Dựng sẵn trên Web & Mobile
 
@@ -63,7 +63,7 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 - **Script Google Sheets & Apps Script gốc**: Lưu tại [`google-sheets/Code.gs`](./google-sheets/Code.gs)
   - Chứa hàm `setupPhuonghihiDatabase()` tự động khởi tạo **8 trang tính (Sheets) chuẩn**: `NhanVien`, `PhanCa`, `DiemDanh`, `DonTu`, `BangCong`, `BangLuong`, `CaiDat`, `NhatKyHeThong`.
   - Chứa các endpoint `doGet` và `doPost` để đồng bộ dữ liệu 2 chiều và tự động gửi email phiếu lương.
-  - **URL Web App Apps Script đang kết nối sẵn**: `https://script.google.com/macros/s/AKfycbx66egogcD-sQxv48gLIjCJqeIIEeD_jwkIdmSYAKRsrHKjF_2hV1SMfa-yHRMTt02Z/exec` (cấu hình tại mục **Cài đặt → Tính lương & Sheets**).
+  - **Cấu hình URL Web App Apps Script riêng cho HRM**: Triển khai [`google-sheets/Code.gs`](./google-sheets/Code.gs) thành một Web App độc lập trên Google Sheets HRM (tách biệt với script của Web Bán hàng) và dán URL `/exec` vào mục **Cài đặt → Tính lương & Sheets**.
 - **Dữ liệu gốc (Seed Data 50 nhân sự, bảng công, bảng lương)**: Lưu tại [`src/data/seedData.ts`](./src/data/seedData.ts). Admin (`@admin`), Nhân sự (`@minhanh.hr`) và Kế toán (`@ngoclan.kt`) có thể **Xuất ra file Excel (`.xlsx` / `.csv`)** hoặc **Nhập từ file Excel** trực tiếp tại phân hệ **Nhân viên** và **Báo cáo**.
 
 ---

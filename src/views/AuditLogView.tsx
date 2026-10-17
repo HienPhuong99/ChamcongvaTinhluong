@@ -82,7 +82,7 @@ export const AuditLogView: React.FC = () => {
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
         {/* Filter Bar */}
         <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-          <div className="relative flex-1 min-w-[260px]">
+          <div className="relative flex-1 min-w-[200px] w-full sm:w-auto">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -93,11 +93,11 @@ export const AuditLogView: React.FC = () => {
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <select
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
-              className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white text-slate-700"
+              className="flex-1 sm:flex-none min-w-0 max-w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white text-slate-700"
             >
               <option value="ALL">Thao tác</option>
               {uniqueActions.map((act) => (
@@ -110,7 +110,7 @@ export const AuditLogView: React.FC = () => {
             <select
               value={actorFilter}
               onChange={(e) => setActorFilter(e.target.value)}
-              className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white text-slate-700"
+              className="flex-1 sm:flex-none min-w-0 max-w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white text-slate-700"
             >
               <option value="ALL">Người thực hiện</option>
               {uniqueActors.map((actor) => (

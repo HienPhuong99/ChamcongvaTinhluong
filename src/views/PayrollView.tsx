@@ -30,14 +30,18 @@ import {
   formatVND,
 } from '../utils/helpers';
 
-const PERIODS = ['2026-08', '2026-09', '2026-10'] as const;
-type PeriodKey = (typeof PERIODS)[number];
+function shiftPeriodMonth(period: string, delta: number): string {
+  const [yStr, mStr] = period.split('-');
+  const y = parseInt(yStr || '2026', 10);
+  const m = parseInt(mStr || '10', 10);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
-const PERIOD_LABELS: Record<PeriodKey, string> = {
-  '2026-08': 'Tháng 8/2026',
-  '2026-09': 'Tháng 9/2026',
-  '2026-10': 'Tháng 10/2026',
-};
+function formatPeriodLabel(period: string): string {
+  const [yStr, mStr] = period.split('-');
+  return `Tháng ${parseInt(mStr || '10', 10)}/${yStr || '2026'}`;
+}
 
 export const PayrollView: React.FC = () => {
   const {
@@ -56,7 +60,7 @@ export const PayrollView: React.FC = () => {
     setActiveTab,
   } = useHRM();
 
-  const [period, setPeriod] = useState<PeriodKey>('2026-09');
+  const [period, setPeriod] = useState<string>('2026-09');
   const [isDeclareModalOpen, setIsDeclareModalOpen] = useState(false);
   const [declareEmpId, setDeclareEmpId] = useState('');
   const [declareAmount, setDeclareAmount] = useState(28000000);
@@ -71,7 +75,6 @@ export const PayrollView: React.FC = () => {
   const [showAllRows, setShowAllRows] = useState(false);
 
   const canManage = canManagePayroll(currentAccount.roleId);
-  const periodIdx = PERIODS.indexOf(period);
 
   const retailStaff = useMemo(
     () =>
@@ -99,14 +102,16 @@ export const PayrollView: React.FC = () => {
     () =>
       payrollPeriods.find((p) => p.period === period) || {
         period,
-        step1TimesheetAggregated: true,
-        step2TimesheetLocked: true,
-        step3SalariesDeclared: false,
-        step4PayrollCalculated: true,
-        step5PayslipsPublished: true,
+        step1TimesheetAggregated: false,
+        step2TimesheetLocked: false,
+        step3SalariesDeclared: !scopedEmployees.some(
+          (e) => e.status !== 'Đã nghỉ' && (!e.baseSalary || e.baseSalary <= 0)
+        ),
+        step4PayrollCalculated: false,
+        step5PayslipsPublished: false,
         locked: false,
       },
-    [payrollPeriods, period]
+    [payrollPeriods, period, scopedEmployees]
   );
 
   const payrollRows = useMemo(
@@ -186,32 +191,63 @@ export const PayrollView: React.FC = () => {
   };
 
   const handleExportVietcombankBatch = () => {
-    exportToExcel(
-      `Vietcombank_ChuyenKhoanLuong_phuonghihi_${period}.xlsx`,
-      `VCB_Payroll_${period}`,
-      payrollRows.map((row, idx) => {
+    const missingBankEmps: string[] = [];
+    const validTransferRows = payrollRows
+      .filter((row) => {
         const emp = scopedEmployees.find((e) => e.id === row.employeeId);
-        const accNum = emp?.bankAccount || `007100${String(102938 + idx).padStart(6, '0')}`;
+        const cleanAcc = emp?.bankAccount?.trim() || '';
+        if (!cleanAcc) {
+          missingBankEmps.push(emp?.name ? `${emp.name} (${emp.code})` : row.employeeId);
+          return false;
+        }
+        return row.netSalary > 0;
+      })
+      .map((row, idx) => {
+        const emp = scopedEmployees.find((e) => e.id === row.employeeId);
         return {
           STT: idx + 1,
           'Mã NV': emp?.code || row.employeeId,
           'Chủ tài khoản thụ hưởng': (emp?.name || row.employeeId).toUpperCase(),
-          'Số tài khoản nhận': accNum,
+          'Số tài khoản nhận': emp!.bankAccount!.trim(),
           'Ngân hàng thụ hưởng': emp?.bankName || 'Vietcombank - CN TP.HCM',
           'Số tiền chuyển khoản (VNĐ)': row.netSalary,
           'Nội dung chuyển khoản': `PHUONGHIHI THANH TOAN LUONG KY ${period} NV ${emp?.code || row.employeeId}`,
         };
-      })
+      });
+
+    if (validTransferRows.length === 0) {
+      showToast(
+        'Không có tài khoản ngân hàng hợp lệ để xuất lệnh chi!',
+        'Vui lòng cập nhật Số tài khoản ngân hàng trong Hồ sơ Nhân sự trước khi xuất Ủy nhiệm chi.',
+        'warning'
+      );
+      return;
+    }
+
+    exportToExcel(
+      `Vietcombank_ChuyenKhoanLuong_phuonghihi_${period}.xlsx`,
+      `VCB_Payroll_${period}`,
+      validTransferRows
     );
     addAuditLog(
       'Xuất lệnh chi lương Vietcombank',
       'Bảng lương',
-      `Kỳ ${period} · ${payrollRows.length} tài khoản thụ hưởng`
+      `Kỳ ${period} · ${validTransferRows.length} tài khoản thụ hưởng${
+        missingBankEmps.length > 0 ? ` (Bỏ qua ${missingBankEmps.length} NV chưa khai STK)` : ''
+      }`
     );
-    showToast(
-      `Đã xuất bảng kê chuyển khoản Vietcombank kỳ ${period}!`,
-      `File Excel chuẩn lô uỷ nhiệm chi cho ${payrollRows.length} nhân viên.`
-    );
+    if (missingBankEmps.length > 0) {
+      showToast(
+        `Đã xuất ${validTransferRows.length} lệnh chi · Bỏ qua ${missingBankEmps.length} NV thiếu STK!`,
+        `Nhân sự chưa khai Số tài khoản: ${missingBankEmps.slice(0, 3).join(', ')}. Vui lòng bổ sung trong mục Nhân sự.`,
+        'warning'
+      );
+    } else {
+      showToast(
+        `Đã xuất bảng kê chuyển khoản Vietcombank kỳ ${period}!`,
+        `File Excel chuẩn lô uỷ nhiệm chi cho ${validTransferRows.length} nhân viên.`
+      );
+    }
   };
 
   const handleApplyCommissionBatch = (e: React.FormEvent) => {
@@ -272,25 +308,29 @@ export const PayrollView: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs shrink-0">
             <button
-              onClick={() => {
-                if (periodIdx > 0) setPeriod(PERIODS[periodIdx - 1]);
-              }}
-              disabled={periodIdx <= 0}
-              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
+              onClick={() => setPeriod((prev) => shiftPeriodMonth(prev, -1))}
+              title="Tháng trước"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800 whitespace-nowrap">
+            <label className="relative flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800 whitespace-nowrap cursor-pointer">
               <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-              <span>{PERIOD_LABELS[period]}</span>
-            </div>
+              <span>{formatPeriodLabel(period)}</span>
+              <input
+                type="month"
+                aria-label="Chọn tháng kỳ lương"
+                value={period}
+                onChange={(e) => {
+                  if (e.target.value) setPeriod(e.target.value);
+                }}
+                className="sr-only"
+              />
+            </label>
             <button
-              onClick={() => {
-                if (periodIdx < PERIODS.length - 1)
-                  setPeriod(PERIODS[periodIdx + 1]);
-              }}
-              disabled={periodIdx >= PERIODS.length - 1}
-              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
+              onClick={() => setPeriod((prev) => shiftPeriodMonth(prev, 1))}
+              title="Tháng tiếp theo"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
             >
               <ChevronRight className="w-4 h-4" />
             </button>

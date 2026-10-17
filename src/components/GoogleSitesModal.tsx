@@ -48,7 +48,7 @@ const MOBILE_EMBED_CODE = `<!DOCTYPE html>
 </html>`;
 
 const CREATED_GOOGLE_SITE_EDITOR_URL =
-  'https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1EAFJGQZZriXfrKFyYxk-RGxmrJXhE3DQ/edit';
+  'https://sites.google.com/d/1Vk57WTh2Pm1IUUq0sv79AbA5WhTZr0BS/p/1OwDFFthLqJKC-wHM70WszAbGweH_VCGO/edit';
 const PUBLISHED_GOOGLE_SITE_URL = 'https://sites.google.com/view/phuonghihi-staff';
 
 const SUGGESTED_SLUGS = [

@@ -11,25 +11,34 @@ import {
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import {
+  calculateInclusiveDays,
   canManagePayroll,
   canManageSchedules,
+  derivePeriodFromDate,
   exportToCSV,
   matchesSearch,
 } from '../utils/helpers';
 
-const PERIODS = ['2026-08', '2026-09', '2026-10'] as const;
-type PeriodKey = (typeof PERIODS)[number];
+function shiftPeriodMonth(period: string, delta: number): string {
+  const [yStr, mStr] = period.split('-');
+  const y = parseInt(yStr || '2026', 10);
+  const m = parseInt(mStr || '10', 10);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
-const PERIOD_LABELS: Record<PeriodKey, string> = {
-  '2026-08': 'Tháng 8/2026',
-  '2026-09': 'Tháng 9/2026',
-  '2026-10': 'Tháng 10/2026',
-};
+function formatPeriodLabel(period: string): string {
+  const [yStr, mStr] = period.split('-');
+  return `Tháng ${parseInt(mStr || '10', 10)}/${yStr || '2026'}`;
+}
 
 export const TimesheetView: React.FC = () => {
   const {
     scopedEmployees,
     timesheets,
+    attendanceRecords,
+    requests,
+    shiftTemplates,
     payrollPeriods,
     settings,
     currentAccount,
@@ -39,7 +48,7 @@ export const TimesheetView: React.FC = () => {
     unlockTimesheetPeriod,
   } = useHRM();
 
-  const [period, setPeriod] = useState<PeriodKey>('2026-10');
+  const [period, setPeriod] = useState<string>('2026-10');
   const [searchQuery, setSearchQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState('ALL');
   const [confirmFilter, setConfirmFilter] = useState<'ALL' | 'CONFIRMED' | 'PENDING'>('ALL');
@@ -48,7 +57,6 @@ export const TimesheetView: React.FC = () => {
     canManageSchedules(currentAccount.roleId) ||
     canManagePayroll(currentAccount.roleId);
 
-  const periodIdx = PERIODS.indexOf(period);
   const periodState = payrollPeriods.find((p) => p.period === period);
   const isPeriodLocked = Boolean(
     periodState?.step2TimesheetLocked || periodState?.locked
@@ -58,21 +66,65 @@ export const TimesheetView: React.FC = () => {
     const standardDays = settings.standardWorkDays || 22;
     return scopedEmployees
       .filter((e) => e.status !== 'Đã nghỉ')
-      .map((emp, idx) => {
-        const ts = timesheets.find(
+      .map((emp) => {
+        const existingTs = timesheets.find(
           (t) => t.employeeId === emp.id && t.period === period
-        ) || {
-          employeeId: emp.id,
-          period,
-          standardDays,
-          actualDays: 20 + (idx % 3) * 0.5,
-          paidLeaveDays: idx % 3 === 0 ? 1 : 0,
-          absentDays: 0,
-          lateCount: idx % 4 === 0 ? 1 : 0,
-          lateMinutes: idx % 4 === 0 ? 10 : 0,
-          otHours: idx % 3 === 0 ? 3 : 0,
-          confirmed: true,
-        };
+        );
+        const periodAtt = attendanceRecords.filter(
+          (r) => r.employeeId === emp.id && r.date.startsWith(period)
+        );
+        const checkedIn = periodAtt.filter((r) => Boolean(r.checkIn));
+
+        let ts = existingTs;
+        if (!ts || periodAtt.length > 0) {
+          const actualDays = checkedIn.reduce((sum, r) => {
+            const tpl = shiftTemplates.find((s) => s.code === r.shiftCode);
+            return sum + (tpl ? tpl.workDays : 1);
+          }, 0);
+          const absentDays = periodAtt.filter(
+            (r) => !r.checkIn && r.status === 'Vắng'
+          ).length;
+          const lateRecs = checkedIn.filter((r) => r.lateMinutes > 0);
+          const lateMinutes = lateRecs.reduce((s, r) => s + r.lateMinutes, 0);
+          const liveOt = checkedIn.reduce((s, r) => s + (r.otHours || 0), 0);
+
+          const approvedLeaves = requests.filter(
+            (r) =>
+              r.employeeId === emp.id &&
+              r.status === 'Đã duyệt' &&
+              (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm') &&
+              derivePeriodFromDate(r.startDate, period) === period
+          );
+          const paidLeaveDays = approvedLeaves.reduce(
+            (s, r) => s + (r.days || calculateInclusiveDays(r.startDate, r.endDate)),
+            0
+          );
+
+          const approvedOtReqs = requests.filter(
+            (r) =>
+              r.employeeId === emp.id &&
+              r.status === 'Đã duyệt' &&
+              r.type === 'Đăng ký tăng ca' &&
+              derivePeriodFromDate(r.startDate, period) === period
+          );
+          const approvedOtHours = approvedOtReqs.reduce(
+            (s, r) => s + (r.otHours || 0),
+            0
+          );
+
+          ts = {
+            employeeId: emp.id,
+            period,
+            standardDays,
+            actualDays,
+            paidLeaveDays,
+            absentDays,
+            lateCount: lateRecs.length,
+            lateMinutes,
+            otHours: Math.max(liveOt, approvedOtHours),
+            confirmed: existingTs?.confirmed ?? false,
+          };
+        }
         return { emp, ts };
       })
       .filter(({ emp, ts }) => {
@@ -91,6 +143,9 @@ export const TimesheetView: React.FC = () => {
   }, [
     scopedEmployees,
     timesheets,
+    attendanceRecords,
+    requests,
+    shiftTemplates,
     period,
     deptFilter,
     confirmFilter,
@@ -134,25 +189,29 @@ export const TimesheetView: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
             <button
-              onClick={() => {
-                if (periodIdx > 0) setPeriod(PERIODS[periodIdx - 1]);
-              }}
-              disabled={periodIdx <= 0}
-              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
+              onClick={() => setPeriod((prev) => shiftPeriodMonth(prev, -1))}
+              title="Tháng trước"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800">
+            <label className="relative flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800 cursor-pointer">
               <Calendar className="w-3.5 h-3.5 text-slate-500" />
-              <span>{PERIOD_LABELS[period]}</span>
-            </div>
+              <span>{formatPeriodLabel(period)}</span>
+              <input
+                type="month"
+                aria-label="Chọn tháng kỳ công"
+                value={period}
+                onChange={(e) => {
+                  if (e.target.value) setPeriod(e.target.value);
+                }}
+                className="sr-only"
+              />
+            </label>
             <button
-              onClick={() => {
-                if (periodIdx < PERIODS.length - 1)
-                  setPeriod(PERIODS[periodIdx + 1]);
-              }}
-              disabled={periodIdx >= PERIODS.length - 1}
-              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
+              onClick={() => setPeriod((prev) => shiftPeriodMonth(prev, 1))}
+              title="Tháng tiếp theo"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
             >
               <ChevronRight className="w-4 h-4" />
             </button>

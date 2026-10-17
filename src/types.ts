@@ -254,9 +254,10 @@ export interface SystemSettings {
   // Máy chấm công
   biometricDeviceName?: string;
   biometricDeviceIp?: string;
-  // Đồng bộ Google Sheets
+  // Đồng bộ Google Sheets & Backend API
   googleSheetsWebAppUrl: string;
   autoSyncGoogleSheets: boolean;
+  apiSecretToken?: string;
 }
 
 export interface RoleDefinition {
@@ -278,6 +279,7 @@ export interface UserAccount {
   dataScope: 'Toàn hệ thống' | 'Chỉ phòng ban mình' | 'Của bản thân' | 'Chỉ mở mã QR tại cửa';
   department?: DepartmentName;
   active: boolean;
+  pin?: string;
 }
 
 export interface AuditLogEntry {

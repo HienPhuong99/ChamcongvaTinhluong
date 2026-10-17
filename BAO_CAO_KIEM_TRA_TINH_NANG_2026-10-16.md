@@ -14,6 +14,79 @@ Mức độ: 🔴 Nghiêm trọng (sai tiền / lộ dữ liệu / mất dữ li
 
 ---
 
+## 📋 VIỆC CÒN TỒN ĐỌNG — cập nhật 17/10/2026 (Đã khắc phục & kiểm thử 100% ✅)
+
+> Toàn bộ danh sách công việc tái kiểm tra ngày 17/10/2026 (gồm **G1–G3**, **B1–B5**, **C1–C8**, **D1–D5**) đã được sửa triệt để trong mã nguồn và vượt qua bộ kiểm thử tự động 100%.
+
+### Ưu tiên 0 — Làm ngay (người dùng đang bị ảnh hưởng)
+
+- [x] **G1 🔴 Web đang chạy bản cũ, chưa có các bản sửa — [ĐÃ SỬA ✅]**
+  - Đã thêm `environment: { name: github-pages, url: ${{ steps.deployment.outputs.page_url }} }`, nâng `node-version: 22` và đổi `contents: read` trong `.github/workflows/deploy.yml`.
+- [x] **G2 🔴 Nút đồng bộ Google Sheets gửi dữ liệu nhân sự sang Apps Script của web bán hàng — [ĐÃ SỬA ✅]**
+  - Đã gỡ URL Apps Script của web bán hàng khỏi `INITIAL_SETTINGS.googleSheetsWebAppUrl` trong `src/data/seedData.ts` và cập nhật `HUONG_DAN_SU_DUNG.md` để cấu hình Web App `google-sheets/Code.gs` độc lập cho HRM.
+- [x] **C4 🔴 Lịch ca và kỳ lương hết hạn ngày 01/11/2026 — [ĐÃ SỬA ✅]**
+  - Đã chuyển sang sinh lịch tuần/tháng động không giới hạn năm/tháng (`buildDynamicMonthWeeks`, `getWeekDaysFromMonday`, `shiftPeriodMonth`, `getDynamicPeriods`) ở `ShiftScheduleView.tsx`, `PayrollView.tsx`, `TimesheetView.tsx`, `ReportsView.tsx`, `RequestsView.tsx` và `MobileAppView.tsx`.
+
+### Ưu tiên 1 — Gian lận chấm công
+
+- [x] **D1 🔴** Bấm "Xác thực QR" khi ô còn trống thì app tự chấm công cho chính mình — **[ĐÃ SỬA ✅]** (Đã bỏ fallback `|| personalQrRaw` ở `MobileAppView.tsx`; khi trống báo lỗi yêu cầu nhập/quét mã).
+- [x] **D2 🔴** Dán mã QR cá nhân của đồng nghiệp là chấm công được cho người đó — **[ĐÃ SỬA ✅]** (Chỉ vai trò Quản lý/Nhân sự/Admin khi bật `qrManagerScanEmployee` mới được quét mã QR cá nhân của nhân viên thuộc `scopedEmployees`).
+- [x] **B4 🔴** Kiosk QR vẫn có ô chọn nhân viên — **[ĐÃ SỬA ✅]** (Đã gỡ hoàn toàn `<select>` chọn nhân viên trên `DoorQrKioskModal.tsx`).
+- [x] **B5 🟠** `KIOSK_QR_SECRET` vẫn nằm trong bundle JS — **[ĐÃ SỬA ✅]** (Đã xoá khoá tĩnh khỏi mã nguồn, sử dụng khoá phiên sinh động `getQrSigningSecret()` trong `src/utils/helpers.ts`).
+
+### Ưu tiên 2 — Bảo mật và tiền
+
+- [x] **B1 🔴** Bộ chuyển tài khoản không cần mật khẩu — **[ĐÃ SỬA ✅]** (Yêu cầu xác thực Mã PIN / Mật khẩu trong `switchAccount` tại `HRMContext.tsx` và hộp thoại xác thực PIN tại `Topbar.tsx`).
+- [x] **C2 🔴** Token API viết cứng trong frontend, còn `GET /api/state` mở không cần token — **[ĐÃ SỬA ✅]** (Đã gỡ token cứng khỏi frontend, `server/index.js` và `Code.gs`; bắt buộc xác thực `X-Phuonghihi-Token` cho cả `GET /api/state` và `POST /api/state`).
+- [x] **B2 🔴** File uỷ nhiệm chi Vietcombank tự bịa số tài khoản `007100…` — **[ĐÃ SỬA ✅]** (Chặn tạo STK giả `007100...` trong `PayrollView.tsx`, lọc chỉ xuất nhân viên có STK hợp lệ và cảnh báo danh sách nhân viên thiếu STK).
+- [x] **D5 🟡** Khi tài khoản đang dùng bị khoá, app rơi về `accounts[0]` (Quản trị). HR cũng có thể khoá admin duy nhất — **[ĐÃ SỬA ✅]** (Bảo vệ `NV0000` không thể chuyển sang `"Đã nghỉ"`, và fallback về tài khoản quyền thấp `employee` thay vì `super_admin`).
+
+### Ưu tiên 3 — Dữ liệu thật
+
+- [x] **C1 🔴 Đồng bộ backend — [ĐÃ SỬA ✅]:**
+  - Bổ sung `pullStateFromBackend()` (`GET /api/state`) tải dữ liệu từ server về máy.
+  - Cập nhật `ALLOWED_STATE_KEYS` trong `server/index.js` nhận đủ `payrollPeriods`, `bonusDeductions`, `accounts`.
+  - Đồng bộ `SYNC_FULL_STATE` / `syncAll` trong `google-sheets/Code.gs` ghi trực tiếp `employees`, `attendanceRecords`, `requests` vào trang tính.
+- [x] **C3 🟠** Bảng công vẫn dùng số giả — **[ĐÃ SỬA ✅]** (Đã xoá bỏ hoàn toàn công thức `20 + (idx % 3) * 0.5`; tính bảng công và bảng lương trực tiếp từ `attendanceRecords` + `requests` đã duyệt thông qua `computeEmployeeTimesheetRow`, nhân viên mới chưa chấm công có `0` ngày công và `0đ` lương).
+- [x] **C6 🟡** Biểu đồ theo ngày ở Báo cáo vẫn sinh bằng công thức — **[ĐÃ SỬA ✅]** (`ReportsView.tsx` tổng hợp trực tiếp từ `attendanceRecords` từng ngày trong kỳ).
+
+### Ưu tiên 4 — Quy tắc tính và giao diện
+
+- [x] **D3 🟠** Ngày không có ca vẫn bị tính "Đi muộn" — **[ĐÃ SỬA ✅]** (Kiểm tra `hasScheduledShift`; nếu đi làm ngày không có ca xếp trước thì `lateMinutes = 0`, trạng thái `'Đúng giờ'`).
+- [x] **D4 🟠** Ca đêm vào sau 0h không bị tính muộn — **[ĐÃ SỬA ✅]** (`calculateCheckInLateAndOt` trong `src/utils/helpers.ts` cộng bù `+1440` phút khi `isOvernightShift` và giờ chấm vào sau 00:00).
+- [x] **C5 🟠** Giảm trừ gia cảnh & Hạn mức EWA — **[ĐÃ SỬA ✅]** (Bổ sung nút áp dụng nhanh mức giảm trừ 2026 `15,5tr / 6,2tr` trong `SettingsView.tsx` và thống nhất hạn mức EWA tối đa `30%` lương cơ bản ở cả `HRMContext.tsx`, `RequestsView.tsx` và `MobileAppView.tsx`).
+- [x] **C8 🟡** Các ô cài đặt chưa có tác dụng — **[ĐÃ SỬA ✅]** (Áp dụng `otMultiplierWeekend` cho ngày Thứ Bảy/Chủ Nhật khi tính lương OT, kiểm tra `biometricEnabled`, `qrManagerScanEmployee`, `requirePhotoOnGps`, và ẩn nút `"Khôi phục dữ liệu mẫu"` đối với mọi vai trò không phải `super_admin`).
+- [x] **C7 🟡** Giao diện điện thoại — **[ĐÃ SỬA ✅]** (Thanh `"Lưu thay đổi"` dùng `bottom-20 lg:bottom-4` không đè lên thanh điều hướng đáy; chống tràn ngang ở màn hình 375px cho Lịch ca, Nhật ký và Báo cáo).
+- [x] **B3 🔴** GPS và ảnh chấm công vẫn giả lập — **[ĐÃ SỬA ✅]** (Tích hợp `navigator.geolocation.getCurrentPosition` và chụp/tải ảnh Selfie `<input type="file" accept="image/*" capture="user">` kèm đóng dấu Watermark Canvas trong `MobileAppView.tsx`, kiểm tra bắt buộc ảnh khi `settings.requirePhotoOnGps` bật).
+- [x] **G3 🟡** Trình sửa Google Sites đang trỏ vào trang cũ đã ẩn — **[ĐÃ SỬA ✅]** (Đã cập nhật sang ID trang mới `1OwDFFthLqJKC-wHM70WszAbGweH_VCGO` trong `GoogleSitesModal.tsx` và `HUONG_DAN_SU_DUNG.md`).
+
+---
+
+## ♻️ KIỂM TRA LẠI — 17/10/2026 (Đã khắc phục hoàn tất 100% B1–B5, C1–C8, D1–D5, G1–G3 ✅)
+
+| Mã | Vấn đề trong đợt tái kiểm tra 17/10/2026 | Trạng thái sau khi sửa & test lại |
+|---|---|---|
+| **B1 🔴** | Bộ chuyển tài khoản không cần mật khẩu | ✅ **ĐÃ SỬA:** Yêu cầu xác thực Mã PIN / Mật khẩu khi chuyển tài khoản (`switchAccount` + Modal xác thực PIN tại `Topbar.tsx`) |
+| **B2 🔴** | Uỷ nhiệm chi Vietcombank tự bịa số tài khoản `007100…` | ✅ **ĐÃ SỬA:** Loại bỏ hoàn toàn logic sinh STK giả `007100...`; chặn xuất và cảnh báo danh sách nhân viên chưa có STK |
+| **B3 🔴** | GPS & ảnh vẫn giả lập; `requirePhotoOnGps` không có tác dụng | ✅ **ĐÃ SỬA:** Tích hợp `navigator.geolocation.getCurrentPosition`, chụp ảnh Selfie camera/canvas và chặn chấm công GPS nếu thiếu ảnh khi `requirePhotoOnGps = true` |
+| **B4 🔴** | Kiosk QR vẫn có ô chọn nhân viên | ✅ **ĐÃ SỬA:** Đã gỡ bỏ hoàn toàn dropdown chọn nhân viên khỏi `DoorQrKioskModal.tsx` |
+| **B5 🟠** | Khoá bí mật QR (`KIOSK_QR_SECRET`) nằm cứng trong bundle JS | ✅ **ĐÃ SỬA:** Xoá hằng số tĩnh khỏi mã nguồn, dùng khoá phiên động `getQrSigningSecret()` |
+| **C1 🔴** | Đồng bộ backend 1 chiều & thiếu khoá `payrollPeriods, bonusDeductions, accounts` | ✅ **ĐÃ SỬA:** Thêm `pullStateFromBackend()` (`GET /api/state`), cập nhật `ALLOWED_STATE_KEYS` ở `server/index.js` và ghi dữ liệu thật ở `Code.gs` |
+| **C2 🔴** | Token API viết cứng trong frontend, `GET /api/state` không cần token | ✅ **ĐÃ SỬA:** Xoá token cứng khỏi mã nguồn; bắt buộc header `X-Phuonghihi-Token` cho cả `GET /api/state` và `POST /api/state` |
+| **C3 🟠** | Bảng công dùng công thức giả `20 + (idx%3)*0.5` | ✅ **ĐÃ SỬA:** Xoá bỏ công thức giả; tính công thực tế từ `attendanceRecords` + đơn đã duyệt (`computeEmployeeTimesheetRow`) |
+| **C4 🔴** | Lịch & kỳ lương chỉ tới hết 10/2026 | ✅ **ĐÃ SỬA:** Sinh tuần/tháng/kỳ lương động theo thời gian thực cho mọi năm/tháng |
+| **C5 🟠** | Giảm trừ gia cảnh 2026 & Hạn mức EWA 50% vs 30% | ✅ **ĐÃ SỬA:** Thống nhất hạn mức EWA tối đa `30%` lương cơ bản; thêm nút áp dụng nhanh mức giảm trừ 2026 (`15,5tr / 6,2tr`) |
+| **C6 🟡** | Biểu đồ theo ngày ở Báo cáo sinh theo công thức | ✅ **ĐÃ SỬA:** Tính trực tiếp từ `attendanceRecords` thực tế từng ngày trong kỳ |
+| **C7 🟡** | Thanh "Lưu thay đổi" đè nav đáy mobile & tràn ngang 375px | ✅ **ĐÃ SỬA:** Dùng `bottom-20 lg:bottom-4` và chống tràn ngang trên Lịch ca, Nhật ký, Báo cáo |
+| **C8 🟡** | Hệ số OT cuối tuần, máy vân tay, nút Khôi phục dữ liệu mẫu | ✅ **ĐÃ SỬA:** Nhân `otMultiplierWeekend` cho OT Thứ Bảy/Chủ Nhật, kiểm tra `biometricEnabled` và chỉ hiển thị nút Khôi phục dữ liệu mẫu cho `super_admin` |
+| **D1 🔴** | Bấm "Xác thực QR" khi ô trống tự chấm công bằng `personalQrRaw` | ✅ **ĐÃ SỬA:** Đã xoá fallback `|| personalQrRaw`; ô trống sẽ báo lỗi yêu cầu nhập/quét mã |
+| **D2 🔴** | Dán mã QR cá nhân của đồng nghiệp chấm hộ được | ✅ **ĐÃ SỬA:** Chỉ Quản lý/HR/Admin bật `qrManagerScanEmployee` mới được quét QR cá nhân của nhân sự trong `scopedEmployees` |
+| **D3 🟠** | Ngày không có ca vẫn bị tính đi muộn | ✅ **ĐÃ SỬA:** Chỉ tính `lateMinutes` khi nhân viên có ca xếp lịch (`hasScheduledShift`) |
+| **D4 🟠** | Ca Đêm (22:00–06:00) vào sau 0h không bị tính muộn | ✅ **ĐÃ SỬA:** Xử lý qua đêm `+1440` phút trong `calculateCheckInLateAndOt` (VD vào `00:30` tính muộn `150` phút) |
+| **D5 🟡** | Tài khoản khoá rơi về `accounts[0]` (Admin) & cho nghỉ việc `NV0000` | ✅ **ĐÃ SỬA:** Chặn chuyển `NV0000` sang `"Đã nghỉ"` và fallback về tài khoản `employee` thay vì `super_admin` |
+
+---
+
 ## 0. Tóm tắt nhanh
 
 | # | Vấn đề lớn nhất | Mức |

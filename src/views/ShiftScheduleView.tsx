@@ -15,10 +15,13 @@ import {
 import { useHRM } from '../context/HRMContext';
 import { ShiftCode } from '../types';
 import {
+  addDaysToIsoDate,
   canManageSchedules,
   formatIsoToVN,
   getInitials,
+  getMondayOfIsoDate,
   getTodayIsoDate,
+  getWeekDaysFromMonday,
   matchesSearch,
 } from '../utils/helpers';
 
@@ -30,61 +33,17 @@ interface DayColumn {
   muted?: boolean;
 }
 
-const FIVE_WEEKS_OCT_2026: DayColumn[][] = [
-  // Week 0: 28/09 - 04/10/2026
-  [
-    { date: '2026-09-28', dayName: 'T2', dayNum: '28', monthNum: '09', muted: true },
-    { date: '2026-09-29', dayName: 'T3', dayNum: '29', monthNum: '09', muted: true },
-    { date: '2026-09-30', dayName: 'T4', dayNum: '30', monthNum: '09', muted: true },
-    { date: '2026-10-01', dayName: 'T5', dayNum: '01', monthNum: '10' },
-    { date: '2026-10-02', dayName: 'T6', dayNum: '02', monthNum: '10' },
-    { date: '2026-10-03', dayName: 'T7', dayNum: '03', monthNum: '10' },
-    { date: '2026-10-04', dayName: 'CN', dayNum: '04', monthNum: '10' },
-  ],
-  // Week 1: 05/10 - 11/10/2026
-  [
-    { date: '2026-10-05', dayName: 'T2', dayNum: '05', monthNum: '10' },
-    { date: '2026-10-06', dayName: 'T3', dayNum: '06', monthNum: '10' },
-    { date: '2026-10-07', dayName: 'T4', dayNum: '07', monthNum: '10' },
-    { date: '2026-10-08', dayName: 'T5', dayNum: '08', monthNum: '10' },
-    { date: '2026-10-09', dayName: 'T6', dayNum: '09', monthNum: '10' },
-    { date: '2026-10-10', dayName: 'T7', dayNum: '10', monthNum: '10' },
-    { date: '2026-10-11', dayName: 'CN', dayNum: '11', monthNum: '10' },
-  ],
-  // Week 2: 12/10 - 18/10/2026
-  [
-    { date: '2026-10-12', dayName: 'T2', dayNum: '12', monthNum: '10' },
-    { date: '2026-10-13', dayName: 'T3', dayNum: '13', monthNum: '10' },
-    { date: '2026-10-14', dayName: 'T4', dayNum: '14', monthNum: '10' },
-    { date: '2026-10-15', dayName: 'T5', dayNum: '15', monthNum: '10' },
-    { date: '2026-10-16', dayName: 'T6', dayNum: '16', monthNum: '10' },
-    { date: '2026-10-17', dayName: 'T7', dayNum: '17', monthNum: '10' },
-    { date: '2026-10-18', dayName: 'CN', dayNum: '18', monthNum: '10' },
-  ],
-  // Week 3: 19/10 - 25/10/2026
-  [
-    { date: '2026-10-19', dayName: 'T2', dayNum: '19', monthNum: '10' },
-    { date: '2026-10-20', dayName: 'T3', dayNum: '20', monthNum: '10' },
-    { date: '2026-10-21', dayName: 'T4', dayNum: '21', monthNum: '10' },
-    { date: '2026-10-22', dayName: 'T5', dayNum: '22', monthNum: '10' },
-    { date: '2026-10-23', dayName: 'T6', dayNum: '23', monthNum: '10' },
-    { date: '2026-10-24', dayName: 'T7', dayNum: '24', monthNum: '10' },
-    { date: '2026-10-25', dayName: 'CN', dayNum: '25', monthNum: '10' },
-  ],
-  // Week 4: 26/10 - 01/11/2026
-  [
-    { date: '2026-10-26', dayName: 'T2', dayNum: '26', monthNum: '10' },
-    { date: '2026-10-27', dayName: 'T3', dayNum: '27', monthNum: '10' },
-    { date: '2026-10-28', dayName: 'T4', dayNum: '28', monthNum: '10' },
-    { date: '2026-10-29', dayName: 'T5', dayNum: '29', monthNum: '10' },
-    { date: '2026-10-30', dayName: 'T6', dayNum: '30', monthNum: '10' },
-    { date: '2026-10-31', dayName: 'T7', dayNum: '31', monthNum: '10' },
-    { date: '2026-11-01', dayName: 'CN', dayNum: '01', monthNum: '11', muted: true },
-  ],
-];
-
-const ALL_CALENDAR_DAYS: DayColumn[] = FIVE_WEEKS_OCT_2026.flat();
-const MONTH_OCT_DAYS: DayColumn[] = ALL_CALENDAR_DAYS.filter((d) => !d.muted);
+function buildDynamicMonthWeeks(yearMonth: string): DayColumn[][] {
+  const [, monthStr] = yearMonth.split('-');
+  const firstDayIso = `${yearMonth}-01`;
+  const startMonday = getMondayOfIsoDate(firstDayIso);
+  const weeks: DayColumn[][] = [];
+  for (let w = 0; w < 5; w++) {
+    const mon = addDaysToIsoDate(startMonday, w * 7);
+    weeks.push(getWeekDaysFromMonday(mon, monthStr));
+  }
+  return weeks;
+}
 
 export const ShiftScheduleView: React.FC = () => {
   const {
@@ -103,9 +62,9 @@ export const ShiftScheduleView: React.FC = () => {
   const todayIso = getTodayIsoDate();
   const canEditSchedule = canManageSchedules(currentAccount.roleId);
 
-  const [weekIndex, setWeekIndex] = useState<number>(2); // 2 = 12/10 - 18/10/2026
-  const [selectedDayIso, setSelectedDayIso] = useState<string>(
-    ALL_CALENDAR_DAYS.some((d) => d.date === todayIso) ? todayIso : '2026-10-16'
+  const [selectedDayIso, setSelectedDayIso] = useState<string>(todayIso || '2026-10-16');
+  const [currentMondayIso, setCurrentMondayIso] = useState<string>(() =>
+    getMondayOfIsoDate(todayIso || '2026-10-16')
   );
   const [viewMode, setViewMode] = useState<'Ngày' | 'Tuần' | 'Tháng'>('Tuần');
   const [searchEmp, setSearchEmp] = useState('');
@@ -118,18 +77,52 @@ export const ShiftScheduleView: React.FC = () => {
   const [bulkShift, setBulkShift] = useState<ShiftCode>('hanh_chinh');
   const [showAllRows, setShowAllRows] = useState(false);
 
-  const currentWeekDays = FIVE_WEEKS_OCT_2026[weekIndex] || FIVE_WEEKS_OCT_2026[2];
+  const activeYearMonth = useMemo(
+    () => (viewMode === 'Tuần' ? currentMondayIso.slice(0, 7) : selectedDayIso.slice(0, 7)),
+    [viewMode, currentMondayIso, selectedDayIso]
+  );
+
+  const calendarWeeks = useMemo(
+    () => buildDynamicMonthWeeks(activeYearMonth),
+    [activeYearMonth]
+  );
+
+  const allCalendarDays = useMemo(() => calendarWeeks.flat(), [calendarWeeks]);
+
+  const currentWeekDays = useMemo(
+    () => getWeekDaysFromMonday(currentMondayIso, activeYearMonth.slice(5, 7)),
+    [currentMondayIso, activeYearMonth]
+  );
+
+  const monthDays = useMemo(() => {
+    const [yStr, mStr] = activeYearMonth.split('-');
+    const y = parseInt(yStr || '2026', 10);
+    const m = parseInt(mStr || '10', 10);
+    const lastDay = new Date(y, m, 0).getDate();
+    const list: DayColumn[] = [];
+    for (let d = 1; d <= lastDay; d++) {
+      const iso = `${yStr}-${mStr}-${String(d).padStart(2, '0')}`;
+      const weekCols = getWeekDaysFromMonday(getMondayOfIsoDate(iso), mStr);
+      const found = weekCols.find((c) => c.date === iso);
+      if (found) list.push(found);
+    }
+    return list;
+  }, [activeYearMonth]);
 
   const visibleDays = useMemo<DayColumn[]>(() => {
     if (viewMode === 'Ngày') {
-      const found = ALL_CALENDAR_DAYS.find((d) => d.date === selectedDayIso);
-      return found ? [found] : [currentWeekDays[4]];
+      const found = currentWeekDays.find((d) => d.date === selectedDayIso);
+      if (found) return [found];
+      const fallback = getWeekDaysFromMonday(getMondayOfIsoDate(selectedDayIso)).find(
+        (d) => d.date === selectedDayIso
+      );
+      return fallback ? [fallback] : [currentWeekDays[0]];
     }
     if (viewMode === 'Tháng') {
-      return MONTH_OCT_DAYS;
+      return monthDays;
     }
     return currentWeekDays;
-  }, [viewMode, selectedDayIso, currentWeekDays]);
+  }, [viewMode, selectedDayIso, currentWeekDays, monthDays]);
 
   const activeEmps = useMemo(
     () =>
@@ -226,39 +219,43 @@ export const ShiftScheduleView: React.FC = () => {
 
   const handlePrevPeriod = () => {
     if (viewMode === 'Ngày') {
-      const idx = ALL_CALENDAR_DAYS.findIndex((d) => d.date === selectedDayIso);
-      if (idx > 0) {
-        const nextDay = ALL_CALENDAR_DAYS[idx - 1];
-        setSelectedDayIso(nextDay.date);
-        setWeekIndex(Math.floor((idx - 1) / 7));
-      }
+      const nextDay = addDaysToIsoDate(selectedDayIso, -1);
+      setSelectedDayIso(nextDay);
+      setCurrentMondayIso(getMondayOfIsoDate(nextDay));
+    } else if (viewMode === 'Tháng') {
+      const [yStr, mStr] = activeYearMonth.split('-');
+      const d = new Date(parseInt(yStr, 10), parseInt(mStr, 10) - 2, 1);
+      const nextIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      setSelectedDayIso(nextIso);
+      setCurrentMondayIso(getMondayOfIsoDate(nextIso));
     } else {
-      setWeekIndex((prev) => Math.max(0, prev - 1));
+      const nextMon = addDaysToIsoDate(currentMondayIso, -7);
+      setCurrentMondayIso(nextMon);
+      setSelectedDayIso(nextMon);
     }
   };
 
   const handleNextPeriod = () => {
     if (viewMode === 'Ngày') {
-      const idx = ALL_CALENDAR_DAYS.findIndex((d) => d.date === selectedDayIso);
-      if (idx >= 0 && idx < ALL_CALENDAR_DAYS.length - 1) {
-        const nextDay = ALL_CALENDAR_DAYS[idx + 1];
-        setSelectedDayIso(nextDay.date);
-        setWeekIndex(Math.floor((idx + 1) / 7));
-      }
+      const nextDay = addDaysToIsoDate(selectedDayIso, 1);
+      setSelectedDayIso(nextDay);
+      setCurrentMondayIso(getMondayOfIsoDate(nextDay));
+    } else if (viewMode === 'Tháng') {
+      const [yStr, mStr] = activeYearMonth.split('-');
+      const d = new Date(parseInt(yStr, 10), parseInt(mStr, 10), 1);
+      const nextIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      setSelectedDayIso(nextIso);
+      setCurrentMondayIso(getMondayOfIsoDate(nextIso));
     } else {
-      setWeekIndex((prev) => Math.min(FIVE_WEEKS_OCT_2026.length - 1, prev + 1));
+      const nextMon = addDaysToIsoDate(currentMondayIso, 7);
+      setCurrentMondayIso(nextMon);
+      setSelectedDayIso(nextMon);
     }
   };
 
   const handleJumpToday = () => {
-    const idx = ALL_CALENDAR_DAYS.findIndex((d) => d.date === todayIso);
-    if (idx >= 0) {
-      setWeekIndex(Math.floor(idx / 7));
-      setSelectedDayIso(todayIso);
-    } else {
-      setWeekIndex(2);
-      setSelectedDayIso('2026-10-16');
-    }
+    setSelectedDayIso(todayIso);
+    setCurrentMondayIso(getMondayOfIsoDate(todayIso));
   };
 
   const periodRangeLabel = useMemo(() => {
@@ -266,12 +263,15 @@ export const ShiftScheduleView: React.FC = () => {
       return `Ngày ${formatIsoToVN(visibleDays[0]?.date || selectedDayIso)}`;
     }
     if (viewMode === 'Tháng') {
-      return '01/10/2026 - 31/10/2026 (Toàn tháng 10)';
+      const first = monthDays[0]?.date || `${activeYearMonth}-01`;
+      const last = monthDays[monthDays.length - 1]?.date || `${activeYearMonth}-30`;
+      const [, mStr, yStr] = formatIsoToVN(first).split('/');
+      return `${formatIsoToVN(first)} - ${formatIsoToVN(last)} (Toàn tháng ${parseInt(mStr || '10', 10)}/${yStr || '2026'})`;
     }
     const first = currentWeekDays[0];
     const last = currentWeekDays[currentWeekDays.length - 1];
     return `${formatIsoToVN(first.date)} - ${formatIsoToVN(last.date)}`;
-  }, [viewMode, visibleDays, selectedDayIso, currentWeekDays]);
+  }, [viewMode, visibleDays, selectedDayIso, currentWeekDays, monthDays, activeYearMonth]);
 
   const displayedEmps = showAllRows ? activeEmps : activeEmps.slice(0, 20);
 
@@ -375,10 +375,10 @@ export const ShiftScheduleView: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-7 gap-1 text-center text-xs">
-              {ALL_CALENDAR_DAYS.map((cell, idx) => {
-                const cellWeekIdx = Math.floor(idx / 7);
+              {allCalendarDays.map((cell) => {
                 const isSelectedWeek =
-                  viewMode === 'Tuần' && cellWeekIdx === weekIndex;
+                  viewMode === 'Tuần' &&
+                  currentWeekDays.some((wDay) => wDay.date === cell.date);
                 const isSelectedDay =
                   viewMode === 'Ngày' && cell.date === selectedDayIso;
                 const isTodayCell = cell.date === todayIso;
@@ -386,8 +386,8 @@ export const ShiftScheduleView: React.FC = () => {
                   <button
                     key={cell.date}
                     onClick={() => {
-                      setWeekIndex(cellWeekIdx);
                       setSelectedDayIso(cell.date);
+                      setCurrentMondayIso(getMondayOfIsoDate(cell.date));
                     }}
                     className={`h-7 rounded-lg flex items-center justify-center font-medium transition ${
                       isTodayCell || isSelectedDay
@@ -428,7 +428,7 @@ export const ShiftScheduleView: React.FC = () => {
         </div>
 
         {/* Right Main Schedule Panel */}
-        <div className="flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="w-full max-w-full flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
           {/* Top Toolbar */}
           <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">

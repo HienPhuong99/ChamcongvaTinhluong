@@ -204,7 +204,7 @@ export const INITIAL_EMPLOYEES: Employee[] = RAW_EMPLOYEES.map((raw, idx) => {
             : 'Hợp đồng không xác định thời hạn',
         startDate: raw.joinDate,
         endDate: raw.status === 'Thử việc' ? '30/11/2026' : 'Không thời hạn',
-        baseSalary: raw.baseSalary || 25000000,
+        baseSalary: raw.baseSalary,
         allowance: raw.allowance,
         dependents: idx % 3 === 0 ? 1 : 0,
         status: 'Còn hiệu lực',
@@ -241,7 +241,7 @@ export const INITIAL_EMPLOYEES: Employee[] = RAW_EMPLOYEES.map((raw, idx) => {
   };
 });
 
-// Generate weekly shift schedule covering all of October 2026 (28/09/2026 - 01/11/2026)
+// Generate weekly shift schedule covering Oct & Nov 2026 (28/09/2026 - 06/12/2026)
 function buildInitialShiftAssignments(): ShiftAssignment[] {
   const assignments: ShiftAssignment[] = [];
   const dates = [
@@ -255,6 +255,16 @@ function buildInitialShiftAssignments(): ShiftAssignment[] {
     '2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25',
     // Week 5: 26/10 - 01/11
     '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01',
+    // Week 6: 02/11 - 08/11
+    '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08',
+    // Week 7: 09/11 - 15/11
+    '2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15',
+    // Week 8: 16/11 - 22/11
+    '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22',
+    // Week 9: 23/11 - 29/11
+    '2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27', '2026-11-28', '2026-11-29',
+    // Week 10: 30/11 - 06/12
+    '2026-11-30', '2026-12-01', '2026-12-02', '2026-12-03', '2026-12-04', '2026-12-05', '2026-12-06',
   ];
 
   const specificPatterns: Record<string, (ShiftCode | null)[]> = {
@@ -301,9 +311,49 @@ function buildInitialShiftAssignments(): ShiftAssignment[] {
 
 export const INITIAL_SHIFT_ASSIGNMENTS: ShiftAssignment[] = buildInitialShiftAssignments();
 
-function buildAttendanceForDates(dates: string[]): AttendanceRecord[] {
+function buildInitialAttendanceRecords(): AttendanceRecord[] {
   const records: AttendanceRecord[] = [];
-  dates.forEach((dateStr) => {
+  // Past completed workdays in October 2026
+  const completedDates = [
+    '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-05',
+    '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-10',
+    '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15',
+  ];
+  // Active check-in dates (un-checked yet so user can test live check-in & reminders)
+  const pendingDates = ['2026-10-09', '2026-10-16', '2026-10-17'];
+
+  completedDates.forEach((dateStr, dIdx) => {
+    INITIAL_EMPLOYEES.forEach((emp, empIdx) => {
+      if (emp.status === 'Đã nghỉ') return;
+      const assigned = INITIAL_SHIFT_ASSIGNMENTS.find(
+        (a) => a.employeeId === emp.id && a.date === dateStr
+      );
+      if (!assigned) return;
+      const tpl = SHIFT_TEMPLATES.find((s) => s.code === assigned.shiftCode) || SHIFT_TEMPLATES[0];
+      const isLateSample = (empIdx + dIdx) % 9 === 0;
+      const lateMins = isLateSample ? 12 : 0;
+      const otHrs = (empIdx + dIdx) % 11 === 0 ? 1.5 : 0;
+      const [sh, sm] = tpl.startTime.split(':').map(Number);
+      const inTotal = sh * 60 + sm + lateMins;
+      const inStr = `${String(Math.floor(inTotal / 60) % 24).padStart(2, '0')}:${String(inTotal % 60).padStart(2, '0')}`;
+      records.push({
+        id: `ATT-${dateStr}-${emp.code}`,
+        employeeId: emp.id,
+        date: dateStr,
+        shiftCode: assigned.shiftCode,
+        checkIn: inStr,
+        checkOut: tpl.endTime,
+        status: lateMins > 0 ? 'Đi muộn' : 'Đúng giờ',
+        lateMinutes: lateMins,
+        otHours: otHrs,
+        method: empIdx % 3 === 0 ? 'QR tại cửa' : 'GPS',
+        distanceMeters: 12 + (empIdx % 25),
+        gpsAccuracy: 10,
+      });
+    });
+  });
+
+  pendingDates.forEach((dateStr) => {
     INITIAL_EMPLOYEES.forEach((emp) => {
       const assigned = INITIAL_SHIFT_ASSIGNMENTS.find(
         (a) => a.employeeId === emp.id && a.date === dateStr
@@ -330,14 +380,12 @@ function buildAttendanceForDates(dates: string[]): AttendanceRecord[] {
       }
     });
   });
+
   return records;
 }
 
-// Attendance records synced 100% with INITIAL_SHIFT_ASSIGNMENTS for both 2026-10-09 and 2026-10-16
-export const INITIAL_ATTENDANCE_RECORDS: AttendanceRecord[] = buildAttendanceForDates([
-  '2026-10-09',
-  '2026-10-16',
-]);
+// Attendance records synced 100% with INITIAL_SHIFT_ASSIGNMENTS
+export const INITIAL_ATTENDANCE_RECORDS: AttendanceRecord[] = buildInitialAttendanceRecords();
 
 export const INITIAL_REQUESTS: LeaveOrOtRequest[] = [
   {
@@ -507,25 +555,6 @@ export const INITIAL_LEAVE_BALANCES: LeaveBalance[] = INITIAL_EMPLOYEES.map((emp
   };
 });
 
-// Monthly Timesheet rows matching 00:44 - 00:47 in video
-const VIDEO_TIMESHEET_METRICS: Record<
-  string,
-  { actual: number; leave: number; absent: number; lateCount: number; lateMins: number; ot: number; confirmed: boolean }
-> = {
-  NV0001: { actual: 19.5, leave: 2, absent: 1, lateCount: 1, lateMins: 7, ot: 0, confirmed: true },
-  NV0002: { actual: 19.0, leave: 0, absent: 0, lateCount: 4, lateMins: 32, ot: 2, confirmed: false },
-  NV0003: { actual: 19.5, leave: 3, absent: 0, lateCount: 0, lateMins: 0, ot: 4, confirmed: true },
-  NV0004: { actual: 22.0, leave: 0, absent: 0, lateCount: 3, lateMins: 35, ot: 5, confirmed: false },
-  NV0005: { actual: 22.5, leave: 1, absent: 0, lateCount: 6, lateMins: 86, ot: 0, confirmed: true },
-  NV0006: { actual: 18.5, leave: 0, absent: 0, lateCount: 2, lateMins: 24, ot: 2, confirmed: false },
-  NV0007: { actual: 19.5, leave: 1, absent: 0, lateCount: 5, lateMins: 65, ot: 0, confirmed: false },
-  NV0008: { actual: 20.5, leave: 0, absent: 1, lateCount: 1, lateMins: 14, ot: 3, confirmed: false },
-  NV0009: { actual: 21.5, leave: 1, absent: 0, lateCount: 4, lateMins: 60, ot: 5, confirmed: true },
-  NV0010: { actual: 22.0, leave: 0, absent: 0, lateCount: 2, lateMins: 28, ot: 2, confirmed: false },
-  NV0011: { actual: 19.5, leave: 2, absent: 0, lateCount: 3, lateMins: 24, ot: 1, confirmed: true },
-  NV0012: { actual: 20.5, leave: 1, absent: 0, lateCount: 2, lateMins: 20, ot: 6, confirmed: true },
-};
-
 export function buildInitialTimesheets(): MonthlyTimesheetRow[] {
   const rows: MonthlyTimesheetRow[] = [];
   const periods = ['2026-10', '2026-09', '2026-08'];
@@ -533,19 +562,36 @@ export function buildInitialTimesheets(): MonthlyTimesheetRow[] {
   periods.forEach((period) => {
     INITIAL_EMPLOYEES.forEach((emp, idx) => {
       if (emp.status === 'Đã nghỉ') return;
-      const preset = VIDEO_TIMESHEET_METRICS[emp.code];
-      if (preset && period === '2026-10') {
+      if (period === '2026-10') {
+        const periodAtt = INITIAL_ATTENDANCE_RECORDS.filter(
+          (r) => r.employeeId === emp.id && r.date.startsWith('2026-10') && Boolean(r.checkIn)
+        );
+        const actualDays = periodAtt.reduce((sum, r) => {
+          const tpl = SHIFT_TEMPLATES.find((s) => s.code === r.shiftCode);
+          return sum + (tpl ? tpl.workDays : 1);
+        }, 0);
+        const lateRecs = periodAtt.filter((r) => r.lateMinutes > 0);
+        const lateMinutes = lateRecs.reduce((s, r) => s + r.lateMinutes, 0);
+        const otHours = periodAtt.reduce((s, r) => s + (r.otHours || 0), 0);
+        const approvedLeaves = INITIAL_REQUESTS.filter(
+          (r) =>
+            r.employeeId === emp.id &&
+            r.status === 'Đã duyệt' &&
+            (r.type === 'Nghỉ phép năm' || r.type === 'Nghỉ ốm') &&
+            r.startDate.endsWith('/10/2026')
+        );
+        const paidLeaveDays = approvedLeaves.reduce((s, r) => s + (r.days || 1), 0);
         rows.push({
           employeeId: emp.id,
           period,
           standardDays: 22,
-          actualDays: preset.actual,
-          paidLeaveDays: preset.leave,
-          absentDays: preset.absent,
-          lateCount: preset.lateCount,
-          lateMinutes: preset.lateMins,
-          otHours: preset.ot,
-          confirmed: preset.confirmed,
+          actualDays,
+          paidLeaveDays,
+          absentDays: 0,
+          lateCount: lateRecs.length,
+          lateMinutes,
+          otHours,
+          confirmed: idx % 2 === 0,
         });
       } else {
         rows.push({
@@ -558,7 +604,7 @@ export function buildInitialTimesheets(): MonthlyTimesheetRow[] {
           lateCount: idx % 4,
           lateMinutes: (idx % 4) * 14,
           otHours: idx % 5 === 0 ? 3 : idx % 3 === 0 ? 2 : 0,
-          confirmed: period !== '2026-10' ? true : idx % 2 === 0,
+          confirmed: true,
         });
       }
     });
@@ -661,7 +707,7 @@ export const INITIAL_SETTINGS: SystemSettings = {
   autoSendPayslipEmail: true,
   biometricDeviceName: 'ZKTeco SenseFace 4A (Quầy thu ngân 123 Lê Lợi)',
   biometricDeviceIp: '192.168.1.201:4370',
-  googleSheetsWebAppUrl: 'https://script.google.com/macros/s/AKfycbx66egogcD-sQxv48gLIjCJqeIIEeD_jwkIdmSYAKRsrHKjF_2hV1SMfa-yHRMTt02Z/exec',
+  googleSheetsWebAppUrl: '',
   autoSyncGoogleSheets: false,
 };
 

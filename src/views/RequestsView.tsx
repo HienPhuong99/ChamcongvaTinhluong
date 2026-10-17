@@ -11,67 +11,31 @@ import {
 import { isDateInLeaveRange, useHRM } from '../context/HRMContext';
 import { RequestType, ShiftCode } from '../types';
 import {
+  addDaysToIsoDate,
   calculateInclusiveDays,
   canApproveRequests,
   canManageHR,
+  formatIsoToVN,
+  formatVND,
   getInitials,
 } from '../utils/helpers';
 
 type RequestSubTab = 'mine' | 'pending' | 'calendar' | 'balance';
 
-const CALENDAR_WINDOWS = [
-  // Window 0: 01/10 - 14/10
-  [
-    { iso: '2026-10-01', label: 'T5 1' },
-    { iso: '2026-10-02', label: 'T6 2' },
-    { iso: '2026-10-03', label: 'T7 3' },
-    { iso: '2026-10-04', label: 'CN 4', isSun: true },
-    { iso: '2026-10-05', label: 'T2 5' },
-    { iso: '2026-10-06', label: 'T3 6' },
-    { iso: '2026-10-07', label: 'T4 7' },
-    { iso: '2026-10-08', label: 'T5 8' },
-    { iso: '2026-10-09', label: 'T6 9' },
-    { iso: '2026-10-10', label: 'T7 10' },
-    { iso: '2026-10-11', label: 'CN 11', isSun: true },
-    { iso: '2026-10-12', label: 'T2 12' },
-    { iso: '2026-10-13', label: 'T3 13' },
-    { iso: '2026-10-14', label: 'T4 14' },
-  ],
-  // Window 1: 08/10 - 21/10 (Default)
-  [
-    { iso: '2026-10-08', label: 'T5 8' },
-    { iso: '2026-10-09', label: 'T6 9' },
-    { iso: '2026-10-10', label: 'T7 10' },
-    { iso: '2026-10-11', label: 'CN 11', isSun: true },
-    { iso: '2026-10-12', label: 'T2 12' },
-    { iso: '2026-10-13', label: 'T3 13' },
-    { iso: '2026-10-14', label: 'T4 14' },
-    { iso: '2026-10-15', label: 'T5 15' },
-    { iso: '2026-10-16', label: 'T6 16' },
-    { iso: '2026-10-17', label: 'T7 17' },
-    { iso: '2026-10-18', label: 'CN 18', isSun: true },
-    { iso: '2026-10-19', label: 'T2 19' },
-    { iso: '2026-10-20', label: 'T3 20' },
-    { iso: '2026-10-21', label: 'T4 21' },
-  ],
-  // Window 2: 18/10 - 31/10
-  [
-    { iso: '2026-10-18', label: 'CN 18', isSun: true },
-    { iso: '2026-10-19', label: 'T2 19' },
-    { iso: '2026-10-20', label: 'T3 20' },
-    { iso: '2026-10-21', label: 'T4 21' },
-    { iso: '2026-10-22', label: 'T5 22' },
-    { iso: '2026-10-23', label: 'T6 23' },
-    { iso: '2026-10-24', label: 'T7 24' },
-    { iso: '2026-10-25', label: 'CN 25', isSun: true },
-    { iso: '2026-10-26', label: 'T2 26' },
-    { iso: '2026-10-27', label: 'T3 27' },
-    { iso: '2026-10-28', label: 'T4 28' },
-    { iso: '2026-10-29', label: 'T5 29' },
-    { iso: '2026-10-30', label: 'T6 30' },
-    { iso: '2026-10-31', label: 'T7 31' },
-  ],
-];
+const DAY_NAMES_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+
+function build14DayWindow(startIso: string) {
+  return Array.from({ length: 14 }, (_, i) => {
+    const iso = addDaysToIsoDate(startIso, i);
+    const d = new Date(`${iso}T00:00:00`);
+    const dow = d.getDay();
+    return {
+      iso,
+      label: `${DAY_NAMES_SHORT[dow]} ${d.getDate()}/${d.getMonth() + 1}`,
+      isSun: dow === 0,
+    };
+  });
+}
 
 export const RequestsView: React.FC = () => {
   const {
@@ -92,7 +56,7 @@ export const RequestsView: React.FC = () => {
     canApprove ? 'pending' : 'mine'
   );
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'Đang chờ' | 'Đã duyệt' | 'Từ chối'>('ALL');
-  const [calendarWinIdx, setCalendarWinIdx] = useState(1);
+  const [calendarStartIso, setCalendarStartIso] = useState('2026-10-08');
   const [showAllBalances, setShowAllBalances] = useState(false);
 
   // New request modal state
@@ -144,7 +108,7 @@ export const RequestsView: React.FC = () => {
 
   // Dynamic Company Leave Calendar items computed from requests
   const calendarDaysWithItems = useMemo(() => {
-    const windowDays = CALENDAR_WINDOWS[calendarWinIdx] || CALENDAR_WINDOWS[1];
+    const windowDays = build14DayWindow(calendarStartIso);
     const leaveAndTripReqs = scopedRequests.filter(
       (r) =>
         r.status !== 'Từ chối' &&
@@ -169,7 +133,7 @@ export const RequestsView: React.FC = () => {
         items: matching,
       };
     });
-  }, [calendarWinIdx, scopedRequests, employees]);
+  }, [calendarStartIso, scopedRequests, employees]);
 
   const totalCalendarRequestsCount = useMemo(
     () =>
@@ -466,25 +430,33 @@ export const RequestsView: React.FC = () => {
                 Lịch nghỉ toàn công ty (Đồng bộ tự động từ đơn từ)
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                01/10/2026 - 31/10/2026 · {totalCalendarRequestsCount} đơn nghỉ phép, nghỉ ốm &amp; công tác trong phạm vi
+                {formatIsoToVN(calendarStartIso)} -{' '}
+                {formatIsoToVN(addDaysToIsoDate(calendarStartIso, 13))} ·{' '}
+                {totalCalendarRequestsCount} đơn nghỉ phép, nghỉ ốm &amp; công tác trong phạm vi
               </p>
             </div>
             <div className="flex items-center gap-1.5">
               <button
-                onClick={() => setCalendarWinIdx((p) => Math.max(0, p - 1))}
-                disabled={calendarWinIdx === 0}
-                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 text-slate-600"
+                onClick={() =>
+                  setCalendarStartIso((prev) => addDaysToIsoDate(prev, -14))
+                }
+                title="14 ngày trước"
+                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <button
+                onClick={() => setCalendarStartIso('2026-10-08')}
+                className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700"
+              >
+                Hiện tại
+              </button>
+              <button
                 onClick={() =>
-                  setCalendarWinIdx((p) =>
-                    Math.min(CALENDAR_WINDOWS.length - 1, p + 1)
-                  )
+                  setCalendarStartIso((prev) => addDaysToIsoDate(prev, 14))
                 }
-                disabled={calendarWinIdx === CALENDAR_WINDOWS.length - 1}
-                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 text-slate-600"
+                title="14 ngày tiếp theo"
+                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -760,13 +732,25 @@ export const RequestsView: React.FC = () => {
               {newType === 'Ứng lương nhanh' && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Số tiền tạm ứng trước (Tối đa 50% lương cơ bản)
+                    Số tiền tạm ứng trước (Tối đa 30% lương cơ bản:{' '}
+                    {formatVND(
+                      Math.round(
+                        ((employees.find((e) => e.id === newEmpId)?.baseSalary ||
+                          15000000) *
+                          0.3)
+                      )
+                    )}
+                    )
                   </label>
                   <input
                     type="number"
                     step={500000}
                     min={500000}
-                    max={15000000}
+                    max={Math.round(
+                      ((employees.find((e) => e.id === newEmpId)?.baseSalary ||
+                        15000000) *
+                        0.3)
+                    )}
                     value={newAdvanceAmount}
                     onChange={(e) => setNewAdvanceAmount(Number(e.target.value))}
                     className="w-full px-3.5 py-2 rounded-xl border border-emerald-300 bg-emerald-50/40 text-xs font-bold text-emerald-800"

@@ -120,7 +120,9 @@ function doGet(e) {
   });
 }
 
-const API_SECRET = 'PHUONGHIHI_API_SECRET_2026';
+function getConfiguredApiSecret() {
+  return PropertiesService.getScriptProperties().getProperty('PHUONGHIHI_API_SECRET');
+}
 
 /**
  * Web App POST Endpoint: Nhận dữ liệu đồng bộ từ Web/App hoặc gửi Email phiếu lương
@@ -132,21 +134,103 @@ function doPost(e) {
       return jsonResponse({ ok: false, error: 'Payload exceeds 500KB limit' });
     }
     const payload = JSON.parse(rawContents);
-    if (payload.token !== API_SECRET) {
-      return jsonResponse({ ok: false, error: 'Unauthorized: invalid API token' });
+    const configuredSecret = getConfiguredApiSecret();
+    if (!configuredSecret || !payload.token || payload.token !== configuredSecret) {
+      return jsonResponse({ ok: false, error: 'Unauthorized: invalid or unconfigured API token' });
     }
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-    if (payload.action === 'SYNC_FULL_STATE') {
+    if (payload.action === 'SYNC_FULL_STATE' || payload.action === 'syncAll') {
+      const stateData = payload.state && typeof payload.state === 'object' ? payload.state : payload;
+
+      // 1. Đồng bộ bảng Nhân viên
+      if (Array.isArray(stateData.employees)) {
+        const empSheet = ss.getSheetByName(SHEET_NAMES.EMPLOYEES);
+        if (empSheet) {
+          if (empSheet.getLastRow() > 1) {
+            empSheet.getRange(2, 1, empSheet.getLastRow() - 1, 13).clearContent();
+          }
+          const rows = stateData.employees.slice(0, 500).map((emp) => [
+            sanitizeSheetCell(emp.code),
+            sanitizeSheetCell(emp.name),
+            sanitizeSheetCell(emp.email),
+            sanitizeSheetCell(emp.phone),
+            sanitizeSheetCell(emp.dob),
+            sanitizeSheetCell(emp.department),
+            sanitizeSheetCell(emp.position),
+            sanitizeSheetCell(emp.status),
+            sanitizeSheetCell(emp.joinDate),
+            Number(emp.baseSalary) || 0,
+            Number(emp.allowance) || 0,
+            Number(emp.dependents) || 0,
+            Boolean(emp.allowRemote),
+          ]);
+          if (rows.length > 0) {
+            empSheet.getRange(2, 1, rows.length, 13).setValues(rows);
+          }
+        }
+      }
+
+      // 2. Đồng bộ bảng Điểm danh
+      if (Array.isArray(stateData.attendanceRecords)) {
+        const attSheet = ss.getSheetByName(SHEET_NAMES.ATTENDANCE);
+        if (attSheet) {
+          if (attSheet.getLastRow() > 1) {
+            attSheet.getRange(2, 1, attSheet.getLastRow() - 1, 12).clearContent();
+          }
+          const rows = stateData.attendanceRecords.slice(0, 1000).map((r) => [
+            sanitizeSheetCell(r.id),
+            sanitizeSheetCell(r.employeeId),
+            sanitizeSheetCell(r.date),
+            sanitizeSheetCell(r.shiftCode || ''),
+            sanitizeSheetCell(r.checkIn || ''),
+            sanitizeSheetCell(r.checkOut || ''),
+            sanitizeSheetCell(r.status),
+            Number(r.lateMinutes) || 0,
+            Number(r.otHours) || 0,
+            sanitizeSheetCell(r.method || ''),
+            Number(r.distanceMeters) || 0,
+            sanitizeSheetCell(r.note || ''),
+          ]);
+          if (rows.length > 0) {
+            attSheet.getRange(2, 1, rows.length, 12).setValues(rows);
+          }
+        }
+      }
+
+      // 3. Đồng bộ bảng Đơn từ
+      if (Array.isArray(stateData.requests)) {
+        const reqSheet = ss.getSheetByName(SHEET_NAMES.REQUESTS);
+        if (reqSheet) {
+          if (reqSheet.getLastRow() > 1) {
+            reqSheet.getRange(2, 1, reqSheet.getLastRow() - 1, 8).clearContent();
+          }
+          const rows = stateData.requests.slice(0, 500).map((req) => [
+            sanitizeSheetCell(req.id),
+            sanitizeSheetCell(req.employeeId),
+            sanitizeSheetCell(req.type),
+            sanitizeSheetCell(req.startDate),
+            sanitizeSheetCell(req.endDate),
+            sanitizeSheetCell(req.reason),
+            sanitizeSheetCell(req.status),
+            sanitizeSheetCell(req.createdAt),
+          ]);
+          if (rows.length > 0) {
+            reqSheet.getRange(2, 1, rows.length, 8).setValues(rows);
+          }
+        }
+      }
+
+      // 4. Ghi trạng thái đồng bộ vào CaiDat
       const settingsSheet = ss.getSheetByName(SHEET_NAMES.SETTINGS);
       if (settingsSheet) {
         settingsSheet.appendRow([
           sanitizeSheetCell('LAST_FULL_SYNC'),
           sanitizeSheetCell(JSON.stringify({
-            exportedAt: payload.exportedAt || new Date().toISOString(),
-            employeeCount: Array.isArray(payload.employees) ? payload.employees.length : 0,
-            attendanceCount: Array.isArray(payload.attendanceRecords) ? payload.attendanceRecords.length : 0,
-            requestCount: Array.isArray(payload.requests) ? payload.requests.length : 0,
+            exportedAt: stateData.exportedAt || new Date().toISOString(),
+            employeeCount: Array.isArray(stateData.employees) ? stateData.employees.length : 0,
+            attendanceCount: Array.isArray(stateData.attendanceRecords) ? stateData.attendanceRecords.length : 0,
+            requestCount: Array.isArray(stateData.requests) ? stateData.requests.length : 0,
           })),
           sanitizeSheetCell(new Date().toLocaleString('vi-VN')),
         ]);

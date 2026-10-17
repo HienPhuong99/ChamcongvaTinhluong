@@ -14,20 +14,23 @@ import {
 import { useHRM } from '../context/HRMContext';
 import { exportToCSV, exportToExcel, formatVND } from '../utils/helpers';
 
-const PERIODS = ['2026-08', '2026-09', '2026-10'] as const;
-type PeriodKey = (typeof PERIODS)[number];
+function shiftPeriodMonth(period: string, delta: number): string {
+  const [yStr, mStr] = period.split('-');
+  const y = parseInt(yStr || '2026', 10);
+  const m = parseInt(mStr || '10', 10);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
-const PERIOD_LABELS: Record<PeriodKey, string> = {
-  '2026-08': 'Tháng 8/2026',
-  '2026-09': 'Tháng 9/2026',
-  '2026-10': 'Tháng 10/2026',
-};
+function formatPeriodLabel(period: string): string {
+  const [yStr, mStr] = period.split('-');
+  return `Tháng ${parseInt(mStr || '10', 10)}/${yStr || '2026'}`;
+}
 
 export const ReportsView: React.FC = () => {
-  const { scopedEmployees, computePayrollRows, showToast } = useHRM();
-  const [period, setPeriod] = useState<PeriodKey>('2026-09');
+  const { scopedEmployees, attendanceRecords, computePayrollRows, showToast } = useHRM();
+  const [period, setPeriod] = useState<string>('2026-09');
 
-  const periodIdx = PERIODS.indexOf(period);
   const payrollRows = useMemo(
     () => computePayrollRows(period),
     [computePayrollRows, period]
@@ -123,25 +126,68 @@ export const ReportsView: React.FC = () => {
       .sort((a, b) => b.workDays - a.workDays);
   }, [payrollRows, scopedEmployees]);
 
-  // Daily chart bars scaled to scopedEmployees
+  // Daily chart bars computed from real attendanceRecords in the selected period
   const dailyChartData = useMemo(() => {
+    const [yStr, mStr] = period.split('-');
+    const year = parseInt(yStr || '2026', 10);
+    const month = parseInt(mStr || '10', 10);
+    const daysInMonth = Math.min(31, new Date(year, month, 0).getDate() || 30);
+    const scopedSet = new Set(scopedEmployees.map((e) => e.id));
+    const periodAtt = attendanceRecords.filter(
+      (r) => r.date.startsWith(period) && scopedSet.has(r.employeeId)
+    );
+
+    if (periodAtt.length > 0) {
+      return Array.from({ length: daysInMonth }, (_, idx) => {
+        const day = idx + 1;
+        const dayStr = String(day).padStart(2, '0');
+        const iso = `${period}-${dayStr}`;
+        const dayRecs = periodAtt.filter((r) => r.date === iso);
+        const checkedIn = dayRecs.filter((r) => Boolean(r.checkIn));
+        const lateCount = checkedIn.filter((r) => r.lateMinutes > 0).length;
+        const absentCount = dayRecs.filter(
+          (r) => !r.checkIn && r.status === 'Vắng'
+        ).length;
+        const otHours = Math.round(
+          checkedIn.reduce((s, r) => s + (r.otHours || 0), 0) * 10
+        ) / 10;
+        return {
+          day: dayStr,
+          workDays: checkedIn.length,
+          lateCount,
+          absentCount,
+          otHours,
+        };
+      });
+    }
+
+    // For historical archived periods (2026-08, 2026-09) that only have monthly timesheet totals
     const activeCount = Math.max(1, payrollRows.length);
-    return Array.from({ length: 29 }, (_, idx) => {
+    const hasSummaryData = summaryMetrics.totalActualDays > 0;
+    return Array.from({ length: daysInMonth }, (_, idx) => {
       const day = idx + 1;
-      const isSunday = day % 7 === 0;
+      const dayStr = String(day).padStart(2, '0');
+      if (!hasSummaryData) {
+        return { day: dayStr, workDays: 0, lateCount: 0, absentCount: 0, otHours: 0 };
+      }
+      const dow = new Date(year, month - 1, day).getDay();
+      const isSunday = dow === 0;
       const workDays = isSunday
-        ? Math.max(1, Math.round(activeCount * 0.1))
-        : Math.max(1, Math.round(activeCount * (0.85 + ((day % 5) * 0.02))));
-      const absentCount = Math.max(0, activeCount - workDays);
+        ? 0
+        : Math.min(
+            activeCount,
+            Math.max(1, Math.round(summaryMetrics.totalActualDays / 22))
+          );
+      const absentCount = isSunday ? 0 : Math.max(0, activeCount - workDays);
       return {
-        day: String(day).padStart(2, '0'),
+        day: dayStr,
         workDays,
-        lateCount: isSunday ? 0 : (day % 4) + 1,
+        lateCount: isSunday ? 0 : Math.round(summaryMetrics.totalLateCount / 22),
         absentCount,
-        otHours: day % 4 === 0 ? 5 : 2,
+        otHours: isSunday ? 0 : Math.round((summaryMetrics.totalOtHours / 22) * 10) / 10,
       };
     });
-  }, [payrollRows.length]);
+  }, [period, scopedEmployees, attendanceRecords, payrollRows.length, summaryMetrics]);
 
   const handleExportCSV = () => {
     exportToCSV(
@@ -201,25 +247,29 @@ export const ReportsView: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-2xs">
           <button
-            onClick={() => {
-              if (periodIdx > 0) setPeriod(PERIODS[periodIdx - 1]);
-            }}
-            disabled={periodIdx <= 0}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
+            onClick={() => setPeriod((prev) => shiftPeriodMonth(prev, -1))}
+            title="Tháng trước"
+            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800">
+          <label className="relative flex items-center gap-2 px-3 py-1 text-xs font-bold text-slate-800 cursor-pointer">
             <Calendar className="w-3.5 h-3.5 text-slate-500" />
-            <span>{PERIOD_LABELS[period]}</span>
-          </div>
+            <span>{formatPeriodLabel(period)}</span>
+            <input
+              type="month"
+              aria-label="Chọn tháng báo cáo"
+              value={period}
+              onChange={(e) => {
+                if (e.target.value) setPeriod(e.target.value);
+              }}
+              className="sr-only"
+            />
+          </label>
           <button
-            onClick={() => {
-              if (periodIdx < PERIODS.length - 1)
-                setPeriod(PERIODS[periodIdx + 1]);
-            }}
-            disabled={periodIdx >= PERIODS.length - 1}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 disabled:opacity-40"
+            onClick={() => setPeriod((prev) => shiftPeriodMonth(prev, 1))}
+            title="Tháng tiếp theo"
+            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -334,7 +384,7 @@ export const ReportsView: React.FC = () => {
         {/* Charts Row 1: Daily Attendance Bar Chart + Donut Status Chart */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* Left 2/3: Daily Bar Chart */}
-          <div className="lg:col-span-2 p-5 rounded-2xl border border-slate-200 space-y-4">
+          <div className="lg:col-span-2 p-5 rounded-2xl border border-slate-200 space-y-4 min-w-0 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">
@@ -344,7 +394,7 @@ export const ReportsView: React.FC = () => {
                   Ngày công, lượt đi muộn, vắng và giờ tăng ca
                 </p>
               </div>
-              <div className="flex items-center gap-3 text-[11px] font-medium text-slate-600">
+              <div className="flex flex-wrap items-center gap-3 text-[11px] font-medium text-slate-600">
                 <span className="flex items-center gap-1">
                   <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
                   Ngày công
@@ -364,7 +414,8 @@ export const ReportsView: React.FC = () => {
               </div>
             </div>
 
-            <div className="h-52 flex items-end gap-1.5 pt-4 border-b border-slate-100">
+            <div className="overflow-x-auto pb-1">
+              <div className="h-52 min-w-[480px] sm:min-w-0 flex items-end gap-1.5 pt-4 border-b border-slate-100">
               {dailyChartData.map((d) => (
                 <div
                   key={d.day}
@@ -399,6 +450,7 @@ export const ReportsView: React.FC = () => {
                   <span className="text-[9px] text-slate-400">{d.day}</span>
                 </div>
               ))}
+              </div>
             </div>
           </div>
 

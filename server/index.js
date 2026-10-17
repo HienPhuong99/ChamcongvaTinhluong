@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,7 +23,8 @@ const ALLOWED_ORIGINS = new Set([
   'https://sites.google.com',
 ]);
 
-const API_SECRET = process.env.PHUONGHIHI_API_SECRET || 'PHUONGHIHI_API_SECRET_2026';
+const API_SECRET =
+  process.env.PHUONGHIHI_API_SECRET || crypto.randomBytes(24).toString('hex');
 
 const ALLOWED_STATE_KEYS = new Set([
   'employees',
@@ -31,9 +33,12 @@ const ALLOWED_STATE_KEYS = new Set([
   'requests',
   'leaveBalances',
   'timesheets',
+  'payrollPeriods',
   'payrollPeriodStates',
+  'bonusDeductions',
   'payrollOverrides',
   'announcements',
+  'accounts',
   'systemUsers',
   'auditLogs',
   'settings',
@@ -141,6 +146,12 @@ const server = http.createServer((req, res) => {
   }
 
   if ((req.url === '/api/state' || req.url === '/api/sync') && req.method === 'GET') {
+    const headerToken = req.headers['x-phuonghihi-token'];
+    if (!headerToken || headerToken !== API_SECRET) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Unauthorized: invalid or missing API token.' }));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(readDb()));
     return;

@@ -14,15 +14,18 @@ import {
   Search,
   Bell,
   ShieldCheck,
+  LocateFixed,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { SHIFT_TEMPLATES } from '../data/seedData';
 import {
   calculateDistanceMeters,
+  canManageSchedules,
   formatIsoToVN,
   formatVND,
   formatVietnameseDayHeader,
   generatePersonalQrPayload,
+  getDynamicPeriods,
   getGreetingByHour,
   getInitials,
   getTodayIsoDate,
@@ -54,14 +57,20 @@ export const MobileAppView: React.FC = () => {
     currentAccount.employeeId || scopedEmployees[0]?.id || 'NV0000'
   );
   const [clockStr, setClockStr] = useState<string>('08:00:00');
-  const [simulatedOffset, setSimulatedOffset] = useState<'in_range' | 'out_of_range'>('in_range');
+  const [simulatedOffset, setSimulatedOffset] = useState<'in_range' | 'out_of_range' | 'real_gps'>('in_range');
+  const [realGpsCoords, setRealGpsCoords] = useState<{
+    lat: number;
+    lng: number;
+    accuracy: number;
+  } | null>(null);
+  const [capturedPhotoUrl, setCapturedPhotoUrl] = useState<string>('');
   const [mobileSubTab, setMobileSubTab] = useState<'checkin' | 'my_qr' | 'quick_req' | 'payslip'>(
     'checkin'
   );
   const [personalQrUrl, setPersonalQrUrl] = useState<string>('');
   const [personalQrRaw, setPersonalQrRaw] = useState<string>('');
   const [scanInputToken, setScanInputToken] = useState<string>('');
-  const [payslipPeriod, setPayslipPeriod] = useState<'2026-10' | '2026-09' | '2026-08'>('2026-09');
+  const [payslipPeriod, setPayslipPeriod] = useState<string>('2026-09');
   const [reqType, setReqType] = useState<
     | 'Nghỉ phép năm'
     | 'Đổi ca trực'
@@ -77,6 +86,7 @@ export const MobileAppView: React.FC = () => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.CircleMarker | null>(null);
+  const selfieFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (
@@ -105,11 +115,16 @@ export const MobileAppView: React.FC = () => {
     SHIFT_TEMPLATES.find((s) => s.code === assignedShiftCode) ||
     SHIFT_TEMPLATES[0];
 
-  // User simulated coordinates relative to office
+  // User coordinates: either real browser Geolocation or simulated offset relative to office
   const userCoords =
-    simulatedOffset === 'in_range'
+    simulatedOffset === 'real_gps' && realGpsCoords
+      ? { lat: realGpsCoords.lat, lng: realGpsCoords.lng }
+      : simulatedOffset === 'in_range'
       ? { lat: settings.officeLat + 0.00018, lng: settings.officeLng + 0.00016 }
       : { lat: settings.officeLat + 0.0026, lng: settings.officeLng + 0.0021 };
+
+  const currentAccuracy =
+    simulatedOffset === 'real_gps' && realGpsCoords ? Math.round(realGpsCoords.accuracy) : 12;
 
   const distanceMeters = calculateDistanceMeters(
     settings.officeLat,
@@ -118,6 +133,77 @@ export const MobileAppView: React.FC = () => {
     userCoords.lng
   );
   const isInRange = distanceMeters <= settings.allowedRadiusMeters;
+
+  const handleRequestRealGps = () => {
+    if (!navigator.geolocation) {
+      showToast('Thiết bị không hỗ trợ định vị GPS!', undefined, 'warning');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setRealGpsCoords({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy || 15,
+        });
+        setSimulatedOffset('real_gps');
+        showToast(
+          'Đã lấy toạ độ GPS thực tế từ thiết bị!',
+          `Vĩ độ: ${pos.coords.latitude.toFixed(5)} · Kinh độ: ${pos.coords.longitude.toFixed(5)} (±${Math.round(pos.coords.accuracy || 15)}m)`
+        );
+      },
+      () => {
+        showToast(
+          'Không thể truy cập GPS trình duyệt!',
+          'Vui lòng cấp quyền vị trí (Location) hoặc sử dụng nút Giả lập vị trí đứng bên dưới.',
+          'warning'
+        );
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  };
+
+  const handleCaptureSelfieStamp = () => {
+    if (!currentEmp) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 480;
+    canvas.height = 320;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#0F172A';
+      ctx.fillRect(0, 0, 480, 320);
+      ctx.fillStyle = '#1E293B';
+      ctx.fillRect(16, 16, 448, 220);
+      ctx.fillStyle = '#38BDF8';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`SELFIE CHẤM CÔNG · ${currentEmp.code}`, 32, 70);
+      ctx.fillStyle = '#F8FAFC';
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText(currentEmp.name, 32, 110);
+      ctx.fillStyle = '#94A3B8';
+      ctx.font = '15px monospace';
+      ctx.fillText(`Cửa hàng: ${settings.officeName}`, 32, 150);
+      ctx.fillText(`Thời gian: ${formatIsoToVN(activeDate)} ${clockStr}`, 32, 180);
+      ctx.fillStyle = '#34D399';
+      ctx.fillText(`GPS: ${distanceMeters}m (±${currentAccuracy}m) · Đã đóng dấu Watermark`, 32, 210);
+      const dataUrl = canvas.toDataURL('image/png');
+      setCapturedPhotoUrl(dataUrl);
+      showToast('Đã chụp ảnh Selfie kèm đóng dấu GPS Watermark!', `${currentEmp.name} · ${clockStr}`);
+    }
+  };
+
+  const handleSelfieFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setCapturedPhotoUrl(reader.result);
+        showToast('Đã tải ảnh Selfie chấm công!', file.name);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Live digital clock
   useEffect(() => {
@@ -189,7 +275,16 @@ export const MobileAppView: React.FC = () => {
       map.remove();
       mapInstanceRef.current = null;
     };
-  }, [mobileSubTab, settings.officeLat, settings.officeLng, settings.allowedRadiusMeters, simulatedOffset]);
+  }, [
+    mobileSubTab,
+    settings.officeLat,
+    settings.officeLng,
+    settings.allowedRadiusMeters,
+    simulatedOffset,
+    userCoords.lat,
+    userCoords.lng,
+    isInRange,
+  ]);
 
   // Signed Personal QR generator (Issue 1.10)
   useEffect(() => {
@@ -212,9 +307,10 @@ export const MobileAppView: React.FC = () => {
       date: activeDate,
       method: isInRange ? 'GPS' : 'Từ xa',
       distanceMeters,
-      gpsAccuracy: 12,
+      gpsAccuracy: currentAccuracy,
+      photoUrl: capturedPhotoUrl || undefined,
       note: isInRange
-        ? `Chấm công GPS tại ${settings.officeName} [Watermark: ${clockStr} · ±12m]`
+        ? `Chấm công GPS tại ${settings.officeName} [Watermark: ${clockStr} · ±${currentAccuracy}m]`
         : 'Chấm công ngoài phạm vi (Làm việc từ xa)',
     });
   };
@@ -222,17 +318,47 @@ export const MobileAppView: React.FC = () => {
   const handleVerifyScannedQr = (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentEmp) return;
-    const raw = scanInputToken.trim() || personalQrRaw;
+    const raw = scanInputToken.trim();
+    if (!raw) {
+      showToast(
+        'Vui lòng nhập hoặc dán mã QR cần quét!',
+        'Hãy mở Kiosk QR tại cửa để sao chép Token 45s hoặc dán chuỗi QR định danh vào ô.',
+        'warning'
+      );
+      return;
+    }
     if (!settings.qrEnabled) {
-      showToast('Chấm công QR đang tắt!', 'Vui lòng bật Chấm công bằng mã QR trong Cài đặt.');
+      showToast('Chấm công QR đang tắt!', 'Vui lòng bật Chấm công bằng mã QR trong Cài đặt.', 'warning');
       return;
     }
 
     // 1. Check if it's a signed personal QR payload
     const personalCheck = verifyPersonalQrPayload(raw);
     if (personalCheck.valid && personalCheck.empCode) {
-      const targetEmp =
-        employees.find((emp) => emp.code === personalCheck.empCode) || currentEmp;
+      const targetEmp = employees.find((emp) => emp.code === personalCheck.empCode);
+      if (!targetEmp) {
+        showToast('Không tìm thấy nhân viên trong mã QR!', undefined, 'warning');
+        return;
+      }
+      // D2: Only managers/HR/admin with qrManagerScanEmployee enabled can scan another employee's personal QR within their scope
+      if (targetEmp.id !== currentAccount.employeeId) {
+        if (!canManageSchedules(currentAccount.roleId) || !settings.qrManagerScanEmployee) {
+          showToast(
+            'Không có quyền quét mã QR của nhân viên khác!',
+            'Chỉ Quản lý / Nhân sự (khi bật cho phép quét QR nhân viên) mới được quét mã định danh của nhân viên.',
+            'warning'
+          );
+          return;
+        }
+        if (!scopedEmployees.some((emp) => emp.id === targetEmp.id)) {
+          showToast(
+            'Nhân viên ngoài phạm vi quản lý!',
+            `Bạn không có quyền chấm công hộ cho nhân sự phòng ${targetEmp.department}.`,
+            'warning'
+          );
+          return;
+        }
+      }
       checkInOrOut({
         employeeId: targetEmp.id,
         date: activeDate,
@@ -262,7 +388,8 @@ export const MobileAppView: React.FC = () => {
 
     showToast(
       'Mã QR không hợp lệ hoặc đã hết hạn!',
-      personalCheck.error || doorCheck.error || 'Chữ ký số QR không khớp hoặc đã quá hạn.'
+      personalCheck.error || doorCheck.error || 'Chữ ký số QR không khớp hoặc đã quá hạn.',
+      'warning'
     );
   };
 
@@ -443,10 +570,55 @@ export const MobileAppView: React.FC = () => {
                   </span>
                 </button>
 
-                {/* Live Camera Selfie GPS Watermark Badge */}
-                <div className="mb-3 w-full py-1.5 px-2.5 rounded-xl bg-slate-900 text-white text-[10px] font-mono flex items-center justify-between">
-                  <span>📸 {currentEmp?.code} · 123 Lê Lợi, Q.1</span>
-                  <span className="text-emerald-400 font-bold">GPS ±12m · {clockStr}</span>
+                {/* Live Camera Selfie GPS Watermark Badge & Capture Controls */}
+                <div className="mb-3 w-full space-y-2">
+                  <div className="py-1.5 px-2.5 rounded-xl bg-slate-900 text-white text-[10px] font-mono flex items-center justify-between">
+                    <span>📸 {currentEmp?.code} · 123 Lê Lợi, Q.1</span>
+                    <span className="text-emerald-400 font-bold">
+                      GPS ±{currentAccuracy}m · {clockStr}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleCaptureSelfieStamp}
+                      className="flex-1 py-1.5 px-2.5 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-bold transition flex items-center justify-center gap-1"
+                    >
+                      <Camera className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        {capturedPhotoUrl ? 'Chụp lại Selfie GPS' : 'Chụp ảnh Selfie tại quầy'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selfieFileInputRef.current?.click()}
+                      className="py-1.5 px-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[11px] font-semibold transition"
+                    >
+                      Tải ảnh
+                    </button>
+                    <input
+                      ref={selfieFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="user"
+                      onChange={handleSelfieFileChange}
+                      className="hidden"
+                    />
+                  </div>
+
+                  {capturedPhotoUrl && (
+                    <div className="relative rounded-xl overflow-hidden border border-emerald-300 bg-slate-900">
+                      <img
+                        src={capturedPhotoUrl}
+                        alt="Selfie chấm công"
+                        className="w-full h-24 object-cover"
+                      />
+                      <span className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
+                        ✓ Đã đính kèm ảnh Selfie
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Embedded Leaflet OpenStreetMap */}
@@ -469,7 +641,7 @@ export const MobileAppView: React.FC = () => {
                   )}
                   <span>
                     {isInRange ? 'Trong phạm vi' : 'Ngoài phạm vi'} · cách{' '}
-                    {distanceMeters} m · GPS ±12 m
+                    {distanceMeters} m · GPS ±{currentAccuracy} m
                   </span>
                 </div>
               </div>
@@ -498,14 +670,14 @@ export const MobileAppView: React.FC = () => {
 
               <form onSubmit={handleVerifyScannedQr} className="pt-2 space-y-2 text-left">
                 <label className="block text-[11px] font-semibold text-slate-600">
-                  Xác thực nhanh mã QR (Dán chuỗi QR hoặc bấm xác nhận mã hiện tại):
+                  Xác thực mã QR (Dán chuỗi Token QR tại cửa hoặc mã QR nhân viên):
                 </label>
                 <div className="flex gap-1.5">
                   <input
                     type="text"
                     value={scanInputToken}
                     onChange={(e) => setScanInputToken(e.target.value)}
-                    placeholder="Dán chuỗi QR hoặc để trống để quét mã của tôi..."
+                    placeholder="Dán Token QR tại cửa (45s) hoặc chuỗi QR vào đây..."
                     className="flex-1 px-2.5 py-1.5 rounded-xl border border-slate-200 text-[11px] font-mono"
                   />
                   <button
@@ -515,6 +687,15 @@ export const MobileAppView: React.FC = () => {
                     Xác thực QR
                   </button>
                 </div>
+                {canManageSchedules(currentAccount.roleId) && settings.qrManagerScanEmployee && (
+                  <button
+                    type="button"
+                    onClick={() => setScanInputToken(personalQrRaw)}
+                    className="text-[10.5px] font-semibold text-blue-600 hover:underline"
+                  >
+                    + Điền mã QR định danh của {currentEmp?.code} (Dành cho Quản lý quét hộ)
+                  </button>
+                )}
               </form>
 
               <button
@@ -587,13 +768,14 @@ export const MobileAppView: React.FC = () => {
               {reqType === 'Ứng lương nhanh' && (
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">
-                    Số tiền ứng trước (VNĐ)
+                    Số tiền ứng trước (VNĐ - Tối đa 30% lương cơ bản:{' '}
+                    {formatVND(Math.round((currentEmp?.baseSalary || 15000000) * 0.3))})
                   </label>
                   <input
                     type="number"
                     step={500000}
                     min={500000}
-                    max={8000000}
+                    max={Math.round((currentEmp?.baseSalary || 15000000) * 0.3)}
                     value={reqAdvanceAmount}
                     onChange={(e) => setReqAdvanceAmount(Number(e.target.value) || 2000000)}
                     className="w-full px-3 py-2 text-xs rounded-xl border border-emerald-300 bg-emerald-50/50 font-bold text-emerald-800"
@@ -630,14 +812,14 @@ export const MobileAppView: React.FC = () => {
                 </span>
                 <select
                   value={payslipPeriod}
-                  onChange={(e) =>
-                    setPayslipPeriod(e.target.value as '2026-10' | '2026-09' | '2026-08')
-                  }
+                  onChange={(e) => setPayslipPeriod(e.target.value)}
                   className="px-2.5 py-1 rounded-xl border border-slate-200 text-xs font-bold bg-slate-50 text-slate-800"
                 >
-                  <option value="2026-10">Tháng 10/2026</option>
-                  <option value="2026-09">Tháng 9/2026</option>
-                  <option value="2026-08">Tháng 8/2026</option>
+                  {getDynamicPeriods(activeDate).map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               {myPayslip ? (
@@ -767,9 +949,19 @@ export const MobileAppView: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              2. Giả lập vị trí đứng của nhân viên so với {settings.officeName}:
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
+                2. Định vị GPS thực tế hoặc giả lập vị trí đứng so với {settings.officeName}:
+              </label>
+              <button
+                type="button"
+                onClick={handleRequestRealGps}
+                className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:underline"
+              >
+                <LocateFixed className="w-3.5 h-3.5" />
+                <span>Lấy GPS thực tế</span>
+              </button>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
