@@ -54,7 +54,10 @@ export const MobileAppView: React.FC = () => {
   } = useHRM();
 
   const activeDate = selectedAttendanceDate || getTodayIsoDate();
-  const isDemoGpsEnabled = Boolean(settings.demoGpsSimulationEnabled);
+  // Issue N4: Demo GPS flag is strictly read from build-time env var, NEVER from synced settings
+  const isDemoGpsEnabled =
+    (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_ENABLE_GPS_DEMO ===
+    'true';
   const canOpenKioskModal =
     currentAccount.roleId === 'door_kiosk' || canManageSchedules(currentAccount.roleId);
 
@@ -396,11 +399,15 @@ export const MobileAppView: React.FC = () => {
       }
       if (cancelled) return;
       setPersonalQrRaw(signedPayload);
-      QRCode.toDataURL(signedPayload, { width: 220, margin: 2 })
-        .then((url) => {
-          if (!cancelled) setPersonalQrUrl(url);
-        })
-        .catch(() => {});
+      if (signedPayload) {
+        QRCode.toDataURL(signedPayload, { width: 220, margin: 2 })
+          .then((url) => {
+            if (!cancelled) setPersonalQrUrl(url);
+          })
+          .catch(() => {});
+      } else {
+        setPersonalQrUrl('');
+      }
     })();
     return () => {
       cancelled = true;
@@ -420,7 +427,7 @@ export const MobileAppView: React.FC = () => {
       return;
     }
 
-    checkInOrOut({
+    void checkInOrOut({
       employeeId: currentEmp.id,
       date: activeDate,
       method: isInRange ? 'GPS' : 'Từ xa',
@@ -487,12 +494,13 @@ export const MobileAppView: React.FC = () => {
           return;
         }
       }
-      checkInOrOut({
+      await checkInOrOut({
         employeeId: targetEmp.id,
         date: activeDate,
         method: 'QR tại cửa',
         distanceMeters: 4,
         gpsAccuracy: 5,
+        qrToken: raw,
         note: `Quét mã QR định danh xác thực Server (${verification.empCode})`,
       });
       setScanInputToken('');
@@ -500,12 +508,13 @@ export const MobileAppView: React.FC = () => {
     }
 
     if (verification.kind === 'door') {
-      checkInOrOut({
+      await checkInOrOut({
         employeeId: currentEmp.id,
         date: activeDate,
         method: 'QR tại cửa',
         distanceMeters: 5,
         gpsAccuracy: 6,
+        qrToken: raw,
         note: 'Quét mã QR động 45s tại cửa văn phòng (Đã xác thực Server)',
       });
       setScanInputToken('');

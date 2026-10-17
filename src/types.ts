@@ -248,7 +248,6 @@ export interface SystemSettings {
   allowLateCheckOutMinutes: number;
   otMultiplierWeekday: number;
   otMultiplierWeekend: number;
-  demoGpsSimulationEnabled?: boolean;
   // Tính lương
   standardWorkDays: number;
   insuranceRateEmployee: number; // 10.5%
@@ -284,7 +283,6 @@ export interface UserAccount {
   dataScope: 'Toàn hệ thống' | 'Chỉ phòng ban mình' | 'Của bản thân' | 'Chỉ mở mã QR tại cửa';
   department?: DepartmentName;
   active: boolean;
-  pin?: string;
 }
 
 export interface AuditLogEntry {

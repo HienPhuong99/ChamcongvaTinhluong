@@ -65,8 +65,8 @@ export function sanitizeSpreadsheetValue(val: string | number | unknown): string
   return str;
 }
 
-const LOCAL_PIN_HASHES_KEY = 'phuonghihi_account_pin_hashes_v3';
 const LOCAL_API_TOKEN_KEY = 'phuonghihi_local_api_token_v3';
+const LOCAL_SESSION_TOKEN_KEY = 'phuonghihi_session_token_v3';
 
 const FORBIDDEN_WEAK_WORDS = new Set([
   'admin',
@@ -95,7 +95,7 @@ export function isWeakOrForbiddenPin(
 ): string | null {
   const clean = (rawPin || '').trim();
   if (clean.length < 6) {
-    return 'Mã PIN phải có tối thiểu 6 ký tự.';
+    return 'Mật khẩu / Mã PIN phải có tối thiểu 6 ký tự.';
   }
   const lower = clean.toLowerCase();
   if (FORBIDDEN_WEAK_WORDS.has(lower) || isSequentialOrRepeatedDigits(clean)) {
@@ -111,74 +111,30 @@ export function isWeakOrForbiddenPin(
   return null;
 }
 
-/**
- * Multi-round salted 128-bit one-way hash for local PIN verification (Issue B1)
- */
-export function hashAccountPin(accountId: string, rawPin: string): string {
-  const clean = (rawPin || '').trim();
-  let state = `PH_PIN_V3::${accountId}::${clean}`;
-  let h1 = 0x811c9dc5;
-  let h2 = 0xcbf29ce4;
-  let h3 = 0x1b873593;
-  let h4 = 0x85ebca6b;
-  for (let round = 0; round < 64; round++) {
-    const roundStr = `${state}::R${round}::${h1 >>> 0}`;
-    for (let i = 0; i < roundStr.length; i++) {
-      const c = roundStr.charCodeAt(i);
-      h1 = Math.imul(h1 ^ c, 16777619);
-      h2 = Math.imul(h2 ^ (c + round), 2246822507);
-      h3 = Math.imul(h3 ^ (c ^ h1), 3266489909);
-      h4 = Math.imul(h4 ^ (c ^ h2), 668265263);
-    }
-    state = `${(h1 >>> 0).toString(16)}${(h2 >>> 0).toString(16)}`;
-  }
-  return [h1, h2, h3, h4]
-    .map((h) => (h >>> 0).toString(16).padStart(8, '0').toUpperCase())
-    .join('');
-}
-
-export function getLocalAccountPinHashes(): Record<string, string> {
+export function getLocalSessionToken(): string {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
-      const raw = window.localStorage.getItem(LOCAL_PIN_HASHES_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') return parsed as Record<string, string>;
+      return (window.localStorage.getItem(LOCAL_SESSION_TOKEN_KEY) || '').trim();
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
+export function setLocalSessionToken(token: string | null): void {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const clean = (token || '').trim();
+      if (clean) {
+        window.localStorage.setItem(LOCAL_SESSION_TOKEN_KEY, clean);
+      } else {
+        window.localStorage.removeItem(LOCAL_SESSION_TOKEN_KEY);
       }
     }
   } catch {
-    // ignore storage errors
+    // ignore
   }
-  return {};
-}
-
-export function hasAccountPinConfigured(accountId: string): boolean {
-  const map = getLocalAccountPinHashes();
-  return Boolean(map[accountId] && map[accountId].length >= 16);
-}
-
-export function setLocalAccountPin(accountId: string, rawPin: string): void {
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const map = getLocalAccountPinHashes();
-      map[accountId] = hashAccountPin(accountId, rawPin);
-      window.localStorage.setItem(LOCAL_PIN_HASHES_KEY, JSON.stringify(map));
-    }
-  } catch {
-    // ignore storage errors
-  }
-}
-
-export function verifyLocalAccountPin(
-  accountId: string,
-  rawPin: string,
-  username?: string
-): boolean {
-  if (isWeakOrForbiddenPin(rawPin, username) !== null) return false;
-  const map = getLocalAccountPinHashes();
-  const storedHash = map[accountId];
-  if (!storedHash) return false;
-  return storedHash === hashAccountPin(accountId, rawPin);
 }
 
 export function getLocalApiSecretToken(): string {
@@ -207,20 +163,103 @@ export function setLocalApiSecretToken(token: string): void {
   }
 }
 
-export function resolveBackendApiEndpoint(pathStr: string, customBaseUrl?: string): string {
-  const envUrl =
-    (import.meta as unknown as { env?: Record<string, string> }).env
-      ?.VITE_PHUONGHIHI_BACKEND_URL || '';
-  const base = (customBaseUrl || envUrl || '').trim().replace(/\/+$/, '');
-  if (!base || base === '/api') return pathStr;
-  if (base.endsWith('/api') && pathStr.startsWith('/api/')) {
-    return `${base}${pathStr.slice(4)}`;
+export function buildAuthHeaders(
+  extra: Record<string, string> = {}
+): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  const sessionToken = getLocalSessionToken();
+  if (sessionToken) {
+    headers['Authorization'] = `Bearer ${sessionToken}`;
   }
-  return `${base}${pathStr.startsWith('/') ? pathStr : `/${pathStr}`}`;
+  const apiToken = getLocalApiSecretToken();
+  if (apiToken) {
+    headers['X-Phuonghihi-Token'] = apiToken;
+  }
+  return headers;
+}
+
+export function resolveBackendApiEndpoint(pathStr: string, customBaseUrl?: string): string {
+  const custom = (customBaseUrl || '').trim().replace(/\/+$/, '');
+  if (custom && custom !== '/api') {
+    if (custom.endsWith('/api') && pathStr.startsWith('/api/')) {
+      return `${custom}${pathStr.slice(4)}`;
+    }
+    return `${custom}${pathStr.startsWith('/') ? pathStr : `/${pathStr}`}`;
+  }
+
+  // On localhost / 127.0.0.1, talk directly to the local dev/Node server
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ) {
+    return pathStr;
+  }
+
+  const envUrl = (
+    (import.meta as unknown as { env?: Record<string, string> }).env
+      ?.VITE_PHUONGHIHI_BACKEND_URL || ''
+  )
+    .trim()
+    .replace(/\/+$/, '');
+
+  if (!envUrl || envUrl === '/api') return pathStr;
+  if (envUrl.endsWith('/api') && pathStr.startsWith('/api/')) {
+    return `${envUrl}${pathStr.slice(4)}`;
+  }
+  return `${envUrl}${pathStr.startsWith('/') ? pathStr : `/${pathStr}`}`;
+}
+
+export async function backendFetch(
+  urlOrPath: string,
+  init?: RequestInit
+): Promise<Response> {
+  if (urlOrPath.includes('script.google.com')) {
+    const gasMatch = urlOrPath.match(
+      /^(https:\/\/script\.google\.com\/macros\/s\/[^/]+\/(?:exec|dev))(\/.*)?$/i
+    );
+    const execUrl = gasMatch ? gasMatch[1] : urlOrPath;
+    const gasRoute = gasMatch && gasMatch[2] ? gasMatch[2] : '/api/state';
+    const method = (init?.method || 'GET').toUpperCase();
+    let parsedPayload: Record<string, unknown> = {};
+    if (typeof init?.body === 'string' && init.body.trim()) {
+      try {
+        parsedPayload = JSON.parse(init.body);
+      } catch {
+        parsedPayload = {};
+      }
+    }
+    const gasRes = await fetch(execUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify({
+        __gasRoute: gasRoute,
+        __gasMethod: method,
+        __sessionToken: getLocalSessionToken(),
+        __apiSecretToken: getLocalApiSecretToken(),
+        payload: parsedPayload,
+      }),
+    });
+    const data = await gasRes
+      .json()
+      .catch(() => ({ ok: false, error: 'Invalid JSON from Google Apps Script' }));
+    const status =
+      typeof data?.__httpStatus === 'number'
+        ? data.__httpStatus
+        : gasRes.ok
+        ? 200
+        : gasRes.status || 500;
+    return new Response(JSON.stringify(data), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return fetch(urlOrPath, init);
 }
 
 /**
- * Request a server-signed Door QR or Personal QR token so all devices share server verification (Issue B5)
+ * Request a server-signed Door QR or Personal QR token (Issues B5, N2)
  */
 export async function requestQrFromServer(
   params:
@@ -250,9 +289,9 @@ export async function requestQrFromServer(
       : { kind: 'door', nowMs: params.nowMs };
 
   const url = resolveBackendApiEndpoint('/api/qr/generate', baseUrl);
-  const res = await fetch(url, {
+  const res = await backendFetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
   if (res.ok) {
@@ -261,7 +300,8 @@ export async function requestQrFromServer(
       return data.token;
     }
   }
-  throw new Error('Không thể lấy mã QR từ máy chủ');
+  const errData = await res.json().catch(() => ({}));
+  throw new Error(errData?.error || 'Không thể lấy mã QR từ máy chủ');
 }
 
 export async function verifyQrWithServer(
@@ -277,9 +317,9 @@ export async function verifyQrWithServer(
 }> {
   try {
     const url = resolveBackendApiEndpoint('/api/qr/verify', customBaseUrl);
-    const res = await fetch(url, {
+    const res = await backendFetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ token: rawToken }),
     });
     if (res.ok) {
@@ -293,6 +333,11 @@ export async function verifyQrWithServer(
         error: errReason,
         serverVerified: true,
       };
+    }
+    if (res.status === 401 || res.status === 403) {
+      const data = await res.json().catch(() => ({}));
+      const msg = data?.reason || data?.error || 'Phiên đăng nhập không hợp lệ khi xác thực QR.';
+      return { valid: false, reason: msg, error: msg, serverVerified: true };
     }
   } catch {
     // Server offline
@@ -314,6 +359,44 @@ export async function compressImageToDataUrl(
   maxDim = 480,
   quality = 0.6
 ): Promise<string> {
+  if (typeof document === 'undefined') {
+    return typeof fileOrDataUrl === 'string' ? fileOrDataUrl : '';
+  }
+
+  // Fast background-safe path using createImageBitmap (does not stall in hidden tabs)
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const blob: Blob =
+        typeof fileOrDataUrl === 'string'
+          ? await (await fetch(fileOrDataUrl)).blob()
+          : fileOrDataUrl;
+      const bitmap = await createImageBitmap(blob);
+      let width = bitmap.width || maxDim;
+      let height = bitmap.height || maxDim;
+      if (width > maxDim || height > maxDim) {
+        if (width >= height) {
+          height = Math.max(1, Math.round((height * maxDim) / width));
+          width = maxDim;
+        } else {
+          width = Math.max(1, Math.round((width * maxDim) / height));
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        bitmap.close?.();
+        return canvas.toDataURL('image/jpeg', quality);
+      }
+      bitmap.close?.();
+    } catch {
+      // fall through to HTMLImageElement fallback
+    }
+  }
+
   const dataUrl: string =
     typeof fileOrDataUrl === 'string'
       ? fileOrDataUrl
@@ -326,8 +409,6 @@ export async function compressImageToDataUrl(
           reader.onerror = () => reject(new Error('Lỗi đọc file ảnh'));
           reader.readAsDataURL(fileOrDataUrl);
         });
-
-  if (typeof document === 'undefined') return dataUrl;
 
   return new Promise<string>((resolve, reject) => {
     const img = new Image();

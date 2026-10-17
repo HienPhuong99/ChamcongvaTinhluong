@@ -69,15 +69,15 @@ const MainShell: React.FC = () => {
         <div className="min-h-full flex items-center justify-center p-4 sm:p-8 bg-slate-50">
           <div className="max-w-lg w-full bg-white rounded-2xl shadow-lg border border-slate-200 p-6 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600 shrink-0">
+                <UserCheck className="w-5 h-5" />
               </div>
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Phiên làm việc đã đăng xuất hoặc tài khoản bị khoá
+                  Đăng nhập Hệ thống Nhân sự phuonghihi
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Để bảo mật dữ liệu lương & nhân sự, hệ thống không tự động chuyển sang tài khoản của người khác. Vui lòng chọn tài khoản bên dưới để đăng nhập.
+                  Phiên làm việc đang ở trạng thái đăng xuất. Vui lòng chọn tài khoản và nhập mật khẩu / mã PIN do Quản trị viên hoặc HR cấp để xác thực với máy chủ.
                 </p>
               </div>
             </div>
@@ -91,7 +91,7 @@ const MainShell: React.FC = () => {
                   <button
                     key={acc.id}
                     type="button"
-                    onClick={() => switchAccount(acc.id)}
+                    onClick={() => void switchAccount(acc.id)}
                     className="w-full px-4 py-3 text-left hover:bg-blue-50/70 transition flex items-center justify-between gap-3"
                   >
                     <div className="min-w-0">
@@ -168,47 +168,49 @@ const MainShell: React.FC = () => {
         </main>
 
         {/* Mobile Quick Bottom Navigation Bar (< 1024px) */}
-        <nav className="lg:hidden h-14 bg-white border-t border-slate-200 px-2 grid grid-cols-5 gap-1 items-center shrink-0 z-20">
-          {[
-            { id: 'shifts' as const, label: 'Ca trực', icon: CalendarClock },
-            {
-              id: (currentAccount.roleId === 'employee' ? 'timesheet' : 'attendance') as
-                | 'timesheet'
-                | 'attendance',
-              label: currentAccount.roleId === 'employee' ? 'Bảng công' : 'Điểm danh',
-              icon: UserCheck,
-            },
-            { id: 'mobile_app' as const, label: 'Chấm công', icon: Smartphone, highlight: true },
-            { id: 'requests' as const, label: 'Đơn từ', icon: FileText, badge: pendingCount },
-            { id: 'payroll' as const, label: 'Bảng lương', icon: Wallet },
-          ].map((item) => {
-            const Icon = item.icon;
-            const active = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`relative flex flex-col items-center justify-center py-1 rounded-xl text-[10.5px] font-semibold transition ${
-                  item.highlight
-                    ? active
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-blue-50 text-blue-700'
-                    : active
-                    ? 'text-blue-600'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                <span className="mt-0.5 truncate">{item.label}</span>
-                {item.badge !== undefined && item.badge > 0 && (
-                  <span className="absolute top-0.5 right-3 min-w-[14px] h-3.5 px-1 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        {!isLoggedOut && (
+          <nav className="lg:hidden h-14 bg-white border-t border-slate-200 px-2 grid grid-cols-5 gap-1 items-center shrink-0 z-20">
+            {[
+              { id: 'shifts' as const, label: 'Ca trực', icon: CalendarClock },
+              {
+                id: (currentAccount.roleId === 'employee' ? 'timesheet' : 'attendance') as
+                  | 'timesheet'
+                  | 'attendance',
+                label: currentAccount.roleId === 'employee' ? 'Bảng công' : 'Điểm danh',
+                icon: UserCheck,
+              },
+              { id: 'mobile_app' as const, label: 'Chấm công', icon: Smartphone, highlight: true },
+              { id: 'requests' as const, label: 'Đơn từ', icon: FileText, badge: pendingCount },
+              { id: 'payroll' as const, label: 'Bảng lương', icon: Wallet },
+            ].map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  className={`relative flex flex-col items-center justify-center py-1 rounded-xl text-[10.5px] font-semibold transition ${
+                    item.highlight
+                      ? active
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-blue-50 text-blue-700'
+                      : active
+                      ? 'text-blue-600'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="mt-0.5 truncate">{item.label}</span>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span className="absolute top-0.5 right-3 min-w-[14px] h-3.5 px-1 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        )}
       </div>
 
       {/* Global Modals */}

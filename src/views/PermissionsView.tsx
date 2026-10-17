@@ -7,17 +7,19 @@ import {
   ShieldCheck,
   X,
   Trash2,
+  KeyRound,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import { ROLE_DEFINITIONS } from '../data/seedData';
-import { DepartmentName, RoleId } from '../types';
-import { canManageSettings, getInitials, matchesSearch } from '../utils/helpers';
+import { DepartmentName, RoleId, UserAccount } from '../types';
+import { canManageHR, canManageSettings, getInitials, matchesSearch } from '../utils/helpers';
 
 export const PermissionsView: React.FC = () => {
   const {
     accounts,
     currentAccount,
     switchAccount,
+    setAccountServerPin,
     addAccount,
     deleteAccount,
     toggleAccountStatus,
@@ -31,8 +33,14 @@ export const PermissionsView: React.FC = () => {
   const [newEmpId, setNewEmpId] = useState('NV0002');
   const [newRoleId, setNewRoleId] = useState<RoleId>('manager');
   const [newDept, setNewDept] = useState<DepartmentName>('Kỹ thuật');
+  const [newInitialPin, setNewInitialPin] = useState('');
+
+  const [pinTargetAccount, setPinTargetAccount] = useState<UserAccount | null>(null);
+  const [resetPinValue, setResetPinValue] = useState('');
 
   const canManage = canManageSettings(currentAccount.roleId);
+  const canProvisionPin =
+    canManageSettings(currentAccount.roleId) || canManageHR(currentAccount.roleId);
   const activeCount = accounts.filter((a) => a.active).length;
   const lockedCount = accounts.filter((a) => !a.active).length;
 
@@ -70,8 +78,20 @@ export const PermissionsView: React.FC = () => {
       dataScope: scope,
       department: newRoleId === 'manager' ? newDept : emp?.department,
       active: true,
+      initialPin: newInitialPin.trim() || undefined,
     });
+    setNewInitialPin('');
     setIsNewAccModalOpen(false);
+  };
+
+  const handleSetServerPinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pinTargetAccount) return;
+    const ok = await setAccountServerPin(pinTargetAccount.id, resetPinValue);
+    if (ok) {
+      setPinTargetAccount(null);
+      setResetPinValue('');
+    }
   };
 
   return (
@@ -85,7 +105,7 @@ export const PermissionsView: React.FC = () => {
           Phân quyền truy cập
         </h1>
         <p className="text-xs text-slate-500 mt-0.5">
-          Tài khoản, vai trò và phạm vi dữ liệu.
+          Tài khoản, vai trò, phạm vi dữ liệu và cấp mật khẩu / mã PIN bảo mật trên Server.
         </p>
       </div>
 
@@ -308,6 +328,20 @@ export const PermissionsView: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-5 text-right">
                       <div className="inline-flex items-center gap-2">
+                        {canProvisionPin && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPinTargetAccount(acc);
+                              setResetPinValue('');
+                            }}
+                            title="Cấp / Đổi mật khẩu hoặc mã PIN đăng nhập trên Server"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 text-[11px] font-semibold transition cursor-pointer"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                            <span>Cấp / Đổi PIN</span>
+                          </button>
+                        )}
                         {isCurrent ? (
                           <span className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[11px]">
                             <ShieldCheck className="w-3.5 h-3.5" />
@@ -315,7 +349,7 @@ export const PermissionsView: React.FC = () => {
                           </span>
                         ) : (
                           <button
-                            onClick={() => switchAccount(acc.id)}
+                            onClick={() => void switchAccount(acc.id)}
                             disabled={!acc.active}
                             className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-blue-600 hover:text-white hover:border-blue-600 disabled:opacity-40 disabled:pointer-events-none font-semibold text-slate-700 transition cursor-pointer"
                           >
@@ -425,6 +459,20 @@ export const PermissionsView: React.FC = () => {
                   </select>
                 </div>
               )}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Mật khẩu / Mã PIN khởi tạo trên Server (≥ 6 ký tự)
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={newInitialPin}
+                  onChange={(e) => setNewInitialPin(e.target.value)}
+                  placeholder="Nhập mật khẩu / mã PIN cấp cho tài khoản..."
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm bg-white"
+                />
+              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -442,6 +490,83 @@ export const PermissionsView: React.FC = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Provision / Reset Server PIN Modal */}
+      {pinTargetAccount && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => {
+            setPinTargetAccount(null);
+            setResetPinValue('');
+          }}
+        >
+          <form
+            onSubmit={handleSetServerPinSubmit}
+            className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900">
+                Cấp / Đổi mã PIN đăng nhập trên Server
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setPinTargetAccount(null);
+                  setResetPinValue('');
+                }}
+                className="p-1 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+              <div className="font-bold text-slate-900">
+                {pinTargetAccount.name} ({pinTargetAccount.username})
+              </div>
+              <div className="text-slate-500 mt-0.5">
+                Phạm vi: {pinTargetAccount.dataScope}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Mật khẩu / Mã PIN mới (≥ 6 ký tự)
+              </label>
+              <input
+                type="password"
+                required
+                minLength={6}
+                autoFocus
+                value={resetPinValue}
+                onChange={(e) => setResetPinValue(e.target.value)}
+                placeholder="Nhập mật khẩu / mã PIN mới..."
+                className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-blue-600"
+              />
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Mã PIN mới sẽ được băm PBKDF2-SHA256 (100.000 vòng) trực tiếp trên máy chủ.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setPinTargetAccount(null);
+                  setResetPinValue('');
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700"
+              >
+                Huỷ
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+              >
+                Lưu PIN lên Server
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

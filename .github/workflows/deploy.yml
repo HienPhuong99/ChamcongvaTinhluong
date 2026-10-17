@@ -31,6 +31,8 @@ jobs:
         run: npm ci
 
       - name: Build production bundle
+        env:
+          VITE_PHUONGHIHI_BACKEND_URL: https://script.google.com/macros/s/AKfycbysdrTdOlQenCjY4Sk2YVpM7-z7W7mnH70Qxcf9tJ8h5k9vjJbC6bFJKoljuwLa4MZc/exec
         run: npm run build
 
       - name: Upload Pages artifact

@@ -239,7 +239,7 @@ export const Sidebar: React.FC = () => {
         </div>
 
         {/* Bottom Attendance Status Widget */}
-        {canAccessTab(currentAccount.roleId, 'attendance') && (
+        {!isLoggedOut && canAccessTab(currentAccount.roleId, 'attendance') && (
           <div className="px-3 pb-2">
             <div
               onClick={() => handleSelectNav('attendance')}

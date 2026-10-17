@@ -35,21 +35,21 @@ Hệ thống được thiết kế đa nền tảng (Web Quản trị, App Chấ
 
 ## PHẦN 2: THÔNG TIN TÀI KHOẢN ĐĂNG NHẬP & CHUYỂN ĐỔI VAI TRÒ (RBAC)
 
-Để bảo mật phân quyền thực tế, hệ thống tích hợp **Bộ chuyển đổi tài khoản có xác thực mã PIN băm (Hash PBKDF2-SHA256)** nằm ở góc trên bên phải thanh công cụ:
-- **Không dùng mã PIN mặc định chung và không chấp nhận tên đăng nhập (`@admin`, v.v.) làm mật khẩu**.
-- **Thiết lập PIN ở lần đầu đăng nhập**: Khi chuyển sang một tài khoản chưa đặt mã PIN trên thiết bị, hệ thống yêu cầu tạo mã PIN mới (tối thiểu 6 ký tự, nhập 2 lần xác nhận). Mã PIN chỉ được lưu dưới dạng băm (`pinHash`) riêng trên thiết bị và tuyệt đối không đồng bộ dạng rõ qua mạng.
-- **Tự động bảo vệ khi khoá tài khoản**: Khi một tài khoản bị Quản trị viên khoá hoặc khi người dùng bấm Đăng xuất, hệ thống lập tức chuyển về màn hình chọn tài khoản đăng nhập (không tự động rơi sang tài khoản của nhân viên khác).
+Để bảo mật phân quyền thực tế, hệ thống tích hợp **Cơ chế xác thực phiên đăng nhập tại Server (`PBKDF2-SHA256` + `HMAC-SHA256` Session Token)**:
+- **Máy mới mặc định ở trạng thái Chưa đăng nhập (`LOGGED_OUT`)**: Bắt buộc chọn tài khoản và nhập đúng mật khẩu / mã PIN để Server xác thực và cấp phiên đăng nhập (`sessionToken`). Việc sửa `localStorage` trên trình duyệt không thể tự nâng quyền.
+- **Quản lý cấp/đổi mã PIN tập trung tại Server**: Không cho phép tự đặt mã PIN lần đầu tại màn hình đăng nhập. Chỉ **Quản trị hệ thống (`@admin`)** hoặc **Nhân sự (`@minhanh.hr`)** mới có quyền cấp/đổi mã PIN cho các tài khoản tại mục **Phân quyền**.
+- **Tự động bảo vệ khi khoá tài khoản**: Khi một tài khoản bị Quản trị viên khoá hoặc khi người dùng bấm Đăng xuất, hệ thống lập tức thu hồi phiên và chuyển về màn hình đăng nhập.
 
 ### 2.1. Danh sách 6 Tài khoản Phân quyền Dựng sẵn trên Web & Mobile
 
-| Mã TK | Họ và tên | Mã NV | Tên đăng nhập | Email đăng nhập | Vai trò (Role) | Phạm vi dữ liệu & Quyền hạn |
+| Mã TK | Họ và tên | Mã NV | Tên đăng nhập | Mật khẩu / PIN khởi tạo | Vai trò (Role) | Phạm vi dữ liệu & Quyền hạn |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `ACC-001` | **Quản lý cửa hàng (phuonghihi)** | `NV0000` | `@admin` | `admin@phuonghihi.vn` | **Quản trị hệ thống** (`super_admin`) | **Toàn hệ thống** — Toàn quyền 14 phân hệ, chốt lương, phân quyền, cài đặt GPS & cấu hình |
-| `ACC-002` | **Nguyễn Minh Anh** | `NV0001` | `@minhanh.hr` | `nv0001@phuonghihi.vn` | **Nhân sự (HR)** (`hr`) | **Toàn hệ thống (Nhân sự)** — Xếp ca, quản lý điểm danh, duyệt đơn từ, hồ sơ 50 nhân viên, checklist nhận/trả việc |
-| `ACC-003` | **Phạm Ngọc Lan** | `NV0004` | `@ngoclan.kt` | `nv0004@phuonghihi.vn` | **Kế toán lương** (`accountant`) | **Toàn hệ thống (Kế toán)** — Tổng hợp bảng công, thưởng/khấu trừ, chạy quy trình làm lương 5 bước & phát hành phiếu lương |
-| `ACC-004` | **Lê Quang Huy** | `NV0003` | `@quanghuy.sales` | `nv0003@phuonghihi.vn` | **Trưởng bộ phận** (`manager`) | **Chỉ phòng ban mình (`Kinh doanh`)** — Xếp ca, theo dõi điểm danh và duyệt đơn nghỉ/OT cho nhân viên đội Kinh doanh |
-| `ACC-005` | **Bùi Minh Quân** | `NV0009` | `@minhquan` | `nv0009@phuonghihi.vn` | **Nhân viên** (`employee`) | **Của bản thân** — Tự chấm công GPS/QR, xem lịch ca cá nhân, gửi đơn xin nghỉ/OT, xem phiếu lương của chính mình |
-| `ACC-006` | **iPad Kiosk Quầy Thu Ngân (123 Lê Lợi)** | `NV0000` | `@kiosk.quay` | `kiosk@phuonghihi.vn` | **Màn hình QR tại cửa** (`door_kiosk`) | **Chỉ mở mã QR tại cửa** — Khoá toàn bộ menu quản trị, chỉ hiển thị màn hình Kiosk Mã QR tự đổi mỗi 45 giây tại quầy thu ngân |
+| `ACC-001` | **Quản lý cửa hàng (phuonghihi)** | `NV0000` | `@admin` | `Admin@2026` | **Quản trị hệ thống** (`super_admin`) | **Toàn hệ thống** — Toàn quyền 14 phân hệ, chốt lương, phân quyền, cấp PIN, cài đặt GPS & cấu hình |
+| `ACC-002` | **Nguyễn Minh Anh** | `NV0001` | `@minhanh.hr` | `HrMinhAnh@2026` | **Nhân sự (HR)** (`hr`) | **Toàn hệ thống (Nhân sự)** — Xếp ca, quản lý điểm danh, duyệt đơn từ, hồ sơ 51 nhân viên, cấp PIN |
+| `ACC-003` | **Phạm Ngọc Lan** | `NV0004` | `@ngoclan.kt` | `KtNgocLan@2026` | **Kế toán lương** (`accountant`) | **Toàn hệ thống (Kế toán)** — Tổng hợp bảng công, thưởng/khấu trừ, chạy quy trình làm lương 5 bước & phát hành phiếu lương |
+| `ACC-004` | **Lê Quang Huy** | `NV0003` | `@quanghuy.sales` | `QlQuangHuy@2026` | **Trưởng bộ phận** (`manager`) | **Chỉ phòng ban mình (`Kinh doanh`)** — Xếp ca, theo dõi điểm danh và duyệt đơn nghỉ/OT cho nhân viên đội Kinh doanh |
+| `ACC-005` | **Bùi Minh Quân** | `NV0009` | `@minhquan` | `NvMinhQuan@2026` | **Nhân viên** (`employee`) | **Của bản thân** — Tự chấm công GPS/QR, xem lịch ca cá nhân, gửi đơn xin nghỉ/OT, xem phiếu lương của chính mình |
+| `ACC-006` | **iPad Kiosk Quầy Thu Ngân (123 Lê Lợi)** | `NV0000` | `@kiosk.quay` | `KioskQuay@2026` | **Màn hình QR tại cửa** (`door_kiosk`) | **Chỉ mở mã QR tại cửa** — Khoá toàn bộ menu quản trị, chỉ hiển thị màn hình Kiosk Mã QR tự đổi mỗi 45 giây tại quầy thu ngân |
 
 ### 2.2. Quy tắc Tài khoản của toàn bộ 50 Nhân viên Cửa hàng `phuonghihi`
 - **Mã nhân viên**: Từ `NV0000` đến `NV0050` (42 Chính thức, 6 Thử việc, 1 Tạm nghỉ, 1 Đã nghỉ).

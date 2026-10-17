@@ -242,25 +242,6 @@ export const SettingsView: React.FC = () => {
                     </div>
                   </div>
                 </label>
-
-                <label className="p-3.5 rounded-xl bg-amber-50/60 border border-amber-200/80 flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(draft.demoGpsSimulationEnabled)}
-                    onChange={(e) =>
-                      updateField('demoGpsSimulationEnabled', e.target.checked)
-                    }
-                    className="mt-0.5 w-4 h-4 accent-amber-600 rounded"
-                  />
-                  <div>
-                    <div className="text-xs font-bold text-amber-900">
-                      Chế độ Demo giả lập vị trí GPS (Tắt ở bản thật)
-                    </div>
-                    <div className="text-[11px] text-amber-800 mt-0.5">
-                      Khi tắt (mặc định), ứng dụng bắt buộc lấy toạ độ GPS thật từ thiết bị (navigator.geolocation). Chỉ bật khi cần thử nghiệm trên máy không có GPS.
-                    </div>
-                  </div>
-                </label>
               </div>
             )}
           </div>
@@ -1017,8 +998,7 @@ export const SettingsView: React.FC = () => {
                 </div>
                 <p className="text-[11px] text-emerald-800 mt-0.5">
                   Đồng bộ 2 chiều giữa trình duyệt, <code>server/index.js</code> và{' '}
-                  <code>google-sheets/Code.gs</code> có bảo vệ bằng khóa xác thực{' '}
-                  <code>PHUONGHIHI_API_SECRET</code>.
+                  <code>google-sheets/Code.gs</code> có bảo vệ bằng phiên đăng nhập hoặc khóa xác thực máy chủ.
                   {lastSyncedAt && ` (Đồng bộ gần nhất: ${lastSyncedAt})`}
                 </p>
               </div>
@@ -1088,7 +1068,7 @@ export const SettingsView: React.FC = () => {
                     setLocalApiSecretToken(e.target.value);
                     setIsDirty(true);
                   }}
-                  placeholder="Nhập PHUONGHIHI_API_SECRET trên máy quản trị..."
+                  placeholder="Nhập khóa xác thực API trên máy quản trị..."
                   className="w-full px-3.5 py-2 rounded-xl border border-emerald-300 bg-white text-xs font-mono"
                 />
               </div>

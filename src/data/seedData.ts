@@ -707,7 +707,6 @@ export const INITIAL_SETTINGS: SystemSettings = {
   allowLateCheckOutMinutes: 120,
   otMultiplierWeekday: 1.5,
   otMultiplierWeekend: 2.0,
-  demoGpsSimulationEnabled: false,
   standardWorkDays: 22,
   insuranceRateEmployee: 10.5,
   maxInsuranceSalary: 46800000,

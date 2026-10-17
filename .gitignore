@@ -38,3 +38,7 @@ ChamCongvaTinhLuong.mp4
 server/db.json
 server/db.json.tmp
 server/.qr_hmac_secret
+server/.session_hmac_secret
+server/.auth_credentials.json
+google-sheets/.clasp.json
+

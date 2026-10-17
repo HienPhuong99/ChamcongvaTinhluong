@@ -11,13 +11,14 @@ import {
   AlertTriangle,
   Lock,
   X,
+  CloudOff,
+  LogOut,
 } from 'lucide-react';
 import { useHRM } from '../context/HRMContext';
 import {
   canManageSchedules,
   canManageSettings,
   getInitials,
-  hasAccountPinConfigured,
 } from '../utils/helpers';
 import { GoogleSitesModal } from './GoogleSitesModal';
 import { ExpoGoModal } from './ExpoGoModal';
@@ -34,6 +35,9 @@ export const Topbar: React.FC = () => {
     accounts,
     currentAccount,
     isLoggedOut,
+    logoutAccount,
+    offlineQueueCount,
+    flushOfflineAttendanceQueue,
     pendingAuthAccountId,
     setPendingAuthAccountId,
     switchAccount,
@@ -44,7 +48,7 @@ export const Topbar: React.FC = () => {
   const [isExpoGoOpen, setIsExpoGoOpen] = useState(false);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
-  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
 
   const scopedIds = new Set(scopedEmployees.map((e) => e.id));
   const pendingCount = requests.filter(
@@ -55,25 +59,21 @@ export const Topbar: React.FC = () => {
     ? accounts.find((a) => a.id === pendingAuthAccountId)
     : null;
 
-  const isTargetPinConfigured = pendingTargetAccount
-    ? hasAccountPinConfigured(pendingTargetAccount.id)
-    : false;
-
   const canOpenKioskModal =
     !isLoggedOut &&
     (currentAccount.roleId === 'door_kiosk' || canManageSchedules(currentAccount.roleId));
 
-  const handleConfirmAccountSwitch = (e: React.FormEvent) => {
+  const handleConfirmAccountSwitch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pendingAuthAccountId) return;
-    const ok = switchAccount(
-      pendingAuthAccountId,
-      pinInput,
-      isTargetPinConfigured ? undefined : confirmPinInput
-    );
-    if (ok) {
-      setPinInput('');
-      setConfirmPinInput('');
+    if (!pendingAuthAccountId || isAuthenticating) return;
+    setIsAuthenticating(true);
+    try {
+      const ok = await switchAccount(pendingAuthAccountId, pinInput);
+      if (ok) {
+        setPinInput('');
+      }
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
@@ -106,8 +106,20 @@ export const Topbar: React.FC = () => {
           </button>
         </div>
 
-        {/* Right: Quick actions, Expo Go, Google Sites, Role Switcher, Notifications, Profile */}
+        {/* Right: Quick actions, Offline Queue, Expo Go, Google Sites, Role Switcher, Notifications, Profile */}
         <div className="flex items-center gap-1.5 xl:gap-2 shrink-0">
+          {/* Issue C1: Offline Attendance Queue Indicator */}
+          {offlineQueueCount > 0 && (
+            <button
+              onClick={() => flushOfflineAttendanceQueue()}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-300 transition cursor-pointer whitespace-nowrap shrink-0"
+              title="Có bản ghi chấm công đang nằm trong hàng đợi Offline. Bấm để gửi lại lên Server ngay."
+            >
+              <CloudOff className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span>Hàng đợi ({offlineQueueCount})</span>
+            </button>
+          )}
+
           {/* Open Mobile Check-in App Button */}
           <button
             onClick={() =>
@@ -177,8 +189,7 @@ export const Topbar: React.FC = () => {
               onChange={(e) => {
                 if (!e.target.value) return;
                 setPinInput('');
-                setConfirmPinInput('');
-                switchAccount(e.target.value);
+                void switchAccount(e.target.value);
               }}
               className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer max-w-[180px] 2xl:max-w-[240px] truncate"
             >
@@ -212,13 +223,24 @@ export const Topbar: React.FC = () => {
           </button>
 
           {/* Reset demo data button (only visible to super_admin) */}
-          {canManageSettings(currentAccount.roleId) && (
+          {!isLoggedOut && canManageSettings(currentAccount.roleId) && (
             <button
               onClick={() => setIsResetConfirmOpen(true)}
               title="Khôi phục dữ liệu mẫu mặc định (Chỉ Quản trị cao nhất)"
               className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition shrink-0"
             >
               <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* Logout button when authenticated */}
+          {!isLoggedOut && (
+            <button
+              onClick={logoutAccount}
+              title="Đăng xuất phiên làm việc hiện tại"
+              className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -234,13 +256,12 @@ export const Topbar: React.FC = () => {
         </div>
       </header>
 
-      {/* PIN / Password Authentication Modal when switching account (Issue B1: No default PIN, no autofill button, first-time setup) */}
+      {/* Server-side PIN / Password Authentication Modal (Issue B1: Never allow first-time PIN setup on login screen) */}
       {pendingTargetAccount && (
         <div
           onClick={() => {
             setPendingAuthAccountId(null);
             setPinInput('');
-            setConfirmPinInput('');
           }}
           className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4"
         >
@@ -256,14 +277,10 @@ export const Topbar: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">
-                    {isTargetPinConfigured
-                      ? 'Xác thực chuyển đổi tài khoản'
-                      : 'Thiết lập mã PIN bảo mật lần đầu'}
+                    Xác thực đăng nhập tài khoản
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {isTargetPinConfigured
-                      ? 'Nhập mã PIN riêng đã thiết lập trên thiết bị này để đăng nhập'
-                      : 'Tài khoản này chưa có mã PIN trên máy. Vui lòng đặt mã PIN riêng (≥ 6 ký tự) trước khi vào.'}
+                    Nhập mật khẩu / mã PIN bảo mật do Quản trị viên hoặc HR cấp (kiểm tra trên Server)
                   </p>
                 </div>
               </div>
@@ -272,7 +289,6 @@ export const Topbar: React.FC = () => {
                 onClick={() => {
                   setPendingAuthAccountId(null);
                   setPinInput('');
-                  setConfirmPinInput('');
                 }}
                 className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
               >
@@ -296,41 +312,20 @@ export const Topbar: React.FC = () => {
             <div className="mt-3.5 space-y-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  {isTargetPinConfigured
-                    ? 'Mã PIN xác thực tài khoản'
-                    : 'Đặt mã PIN mới (tối thiểu 6 ký tự)'}
+                  Mật khẩu / Mã PIN xác thực (Server)
                 </label>
                 <input
                   type="password"
                   autoFocus
                   value={pinInput}
                   onChange={(e) => setPinInput(e.target.value)}
-                  placeholder={
-                    isTargetPinConfigured
-                      ? 'Nhập mã PIN đã thiết lập...'
-                      : 'Nhập mã PIN mới (không dùng dãy số liên tiếp hay tên đăng nhập)...'
-                  }
+                  placeholder="Nhập mật khẩu / mã PIN đã được cấp..."
                   className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-blue-600"
                 />
+                <p className="mt-1.5 text-[11px] text-slate-500">
+                  Xác thực trực tiếp với máy chủ bằng PBKDF2-SHA256 và nhận phiên đăng nhập có chữ ký HMAC.
+                </p>
               </div>
-
-              {!isTargetPinConfigured && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Nhập lại mã PIN mới để xác nhận
-                  </label>
-                  <input
-                    type="password"
-                    value={confirmPinInput}
-                    onChange={(e) => setConfirmPinInput(e.target.value)}
-                    placeholder="Nhập lại đúng mã PIN vừa tạo..."
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-blue-600"
-                  />
-                  <p className="mt-1.5 text-[11px] text-slate-500">
-                    Mã PIN được băm một chiều (salted hash) và chỉ lưu cục bộ trên máy, không đồng bộ sang thiết bị khác.
-                  </p>
-                </div>
-              )}
             </div>
 
             <div className="mt-4 flex items-center justify-end gap-2">
@@ -339,7 +334,6 @@ export const Topbar: React.FC = () => {
                 onClick={() => {
                   setPendingAuthAccountId(null);
                   setPinInput('');
-                  setConfirmPinInput('');
                 }}
                 className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
               >
@@ -347,9 +341,10 @@ export const Topbar: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition shadow-xs"
+                disabled={isAuthenticating}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 transition shadow-xs"
               >
-                {isTargetPinConfigured ? 'Xác thực & Chuyển tài khoản' : 'Lưu PIN & Đăng nhập'}
+                {isAuthenticating ? 'Đang xác thực...' : 'Xác thực & Đăng nhập'}
               </button>
             </div>
           </form>

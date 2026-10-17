@@ -51,7 +51,10 @@ export const DoorQrKioskModal: React.FC = () => {
   }, [isDoorQrModalOpen, canViewKiosk, fetchNewDoorToken]);
 
   useEffect(() => {
-    if (!isDoorQrModalOpen || !canViewKiosk || !tokenSeed) return;
+    if (!isDoorQrModalOpen || !canViewKiosk || !tokenSeed) {
+      setQrDataUrl('');
+      return;
+    }
     const payload = JSON.stringify({
       office: settings.officeName,
       token: tokenSeed,

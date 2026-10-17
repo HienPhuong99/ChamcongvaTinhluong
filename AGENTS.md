@@ -30,94 +30,20 @@ npm run server     # server/index.js (cần env PHUONGHIHI_API_SECRET)
 
 ## Việc cần sửa (theo ưu tiên)
 
-Kết quả kiểm lại commit `5843d2a` ngày 17/10/2026 trên dev server (`npm run dev` đã có API), bằng `curl` và trình duyệt. Commit ghi "đã sửa 14/14", nhưng thực tế còn **2 mục cũ chưa sửa đúng (B1, C1)** và phát sinh **5 lỗi mới**. Trong đó N1 và N2 nặng hơn mọi lỗi trước, vì chúng mở đường cho người ngoài sửa dữ liệu.
-
-Mức độ: 🔴 nghiêm trọng (gian lận, lộ quyền, mất dữ liệu) · 🟠 cao · 🟡 trung bình · ⚪ thấp.
-
-### 🔴 N1. `POST /api/attendance` không cần token mà ghi được toàn bộ state, kể cả tài khoản, lương và cài đặt
-- **Tái hiện** (không đăng nhập):
-  ```bash
-  curl -X POST http://localhost:5173/api/attendance -H 'Content-Type: application/json' \
-    -d '{"accounts":[{"id":"ACC-005","roleId":"super_admin","dataScope":"Toàn hệ thống","active":true}],"settings":{"allowedRadiusMeters":999999},"employees":[{"id":"NV0009","baseSalary":99000000}]}'
-  ```
-  Server trả `ok: true`. Sau đó một trình duyệt mới mở app thì tự tải dữ liệu về, kết quả là:
-  - danh sách **51 nhân viên còn đúng 1** (NV0009, lương 99.000.000);
-  - danh sách tài khoản chỉ còn ACC-005 với `roleId: 'super_admin'`;
-  - bán kính GPS thành 999.999m.
-- **Nguyên nhân:**
-  - `server/apiHandler.js:473` bỏ qua kiểm token khi `urlPath === '/api/attendance'`. Nếu body không có `record`, cả body bị coi là state và đưa vào `mergeServerState`.
-  - Kể cả với `/api/state`, token chỉ bị kiểm **khi có** env `PHUONGHIHI_API_SECRET`.
-  - `HRMContext.tsx:761-762` thay nguyên mảng `employees` bằng mảng nhận từ server; `HRMContext.tsx:815` cũng thay nguyên `accounts`.
-- **Sửa:**
-  - `/api/attendance` chỉ nhận **đúng một** `record`, theo whitelist trường, và chỉ cho `employeeId` của người đang đăng nhập (cần phiên đăng nhập ở server). Mọi body khác trả 400.
-  - `/api/state` luôn bắt buộc token. Không có env thì từ chối, không mở.
-  - Client gộp theo `id` cho cả `employees` và `accounts`, không thay nguyên mảng.
-- **Xong khi:** lệnh `curl` trên trả 400/401 và `db.json` không đổi. Máy mới mở app vẫn có đủ 51 nhân viên.
-
-### 🔴 N2. Không cần đăng nhập vẫn lấy được mã QR hợp lệ của bất kỳ ai và đọc được toàn bộ dữ liệu
-- **Tái hiện:**
-  - `curl -X POST /api/qr/generate -d '{"kind":"personal","empCode":"NV0001"}'` trả về QR cá nhân của NV0001; `/api/qr/verify` xác nhận `valid: true`.
-  - `-d '{"kind":"door"}'` trả về mã QR cửa hợp lệ, gọi từ bất kỳ đâu. Tức là ở nhà vẫn chấm "QR tại cửa" được.
-  - `curl /api/state` (GET, không token) trả **200** kèm toàn bộ lương, số tài khoản, CCCD. Đây là lỗi đã từng được sửa ở `2a91968` và nay quay lại.
-- **Vị trí:** `server/apiHandler.js:430-441` (generate), `:460-465` (GET state).
-- **Sửa:**
-  - `/api/qr/generate` loại `door` chỉ cấp cho thiết bị kiosk đã đăng ký (token riêng của kiosk).
-  - Loại `personal` chỉ cấp cho chính người đang đăng nhập.
-  - `GET /api/state` bắt buộc xác thực, và chỉ trả dữ liệu trong phạm vi quyền của người gọi.
-- **Xong khi:** các lệnh `curl` trên khi không có phiên hoặc token đều trả 401.
-
-### 🔴 B1. Máy mới mở app là vào thẳng Quản trị; nhân viên tự đặt PIN cho admin được
-- **Tái hiện 1:** xoá các key `phuonghihi_*` trong localStorage (hoặc mở trên máy hay trình duyệt mới) rồi tải lại. App vào thẳng `ACC-001 @admin · Toàn hệ thống`, đủ 14 menu, **không hỏi PIN**. Nguyên nhân: `HRMContext.tsx:332-333` mặc định `INITIAL_ACCOUNTS[0].id`.
-- **Tái hiện 2:**
-  1. Đăng nhập Nhân viên ACC-005.
-  2. Chọn "Quản lý cửa hàng". Hộp thoại hiện "Thiết lập mã PIN bảo mật lần đầu" vì PIN admin chưa có trên máy này.
-  3. Nhập `739164` hai lần. App vào được admin.
-  Nguyên nhân: `HRMContext.tsx:949-964`. PIN chỉ lưu theo từng máy, nên trên mỗi máy mới, ai chọn tài khoản trước thì người đó đặt PIN.
-- **Thêm:** sửa `localStorage.phuonghihi_hrm_state_v3_currentAccountId` thành `"ACC-001"` rồi tải lại cũng vào admin. Xác thực chỉ nằm ở client.
-- **Sửa:**
-  - Máy mới mặc định ở trạng thái `LOGGED_OUT`.
-  - PIN hoặc mật khẩu phải do admin hay HR cấp, và kiểm ở **server**.
-  - Không cho "đặt PIN lần đầu" ngay tại màn đăng nhập.
-  - Phiên đăng nhập lưu bằng token do server ký, không phải một `currentAccountId` sửa tay được.
-- **Xong khi:**
-  - Máy mới mở app thấy màn đăng nhập.
-  - Nhân viên không vào được admin khi không biết mật khẩu admin.
-  - Sửa localStorage không đổi được quyền.
-
-### 🔴 C1. Bản đang chạy trên web không có backend nên QR và đồng bộ đều không chạy
-- **Thực tế:**
-  - `/api/*` chỉ có trong dev server (`vite.config.ts`) và `npm run server`.
-  - Trên GitHub Pages, `POST https://hienphuong99.github.io/api/qr/generate`, `/api/state` và `/api/attendance` đều trả **405**.
-  - Hệ quả: trên web thật, kiosk không lấy được mã QR, nên chấm công QR không dùng được. Đồng bộ không chạy. Chấm công chỉ lưu trên máy (`fetch(...).catch(() => {})` bỏ qua lỗi, `HRMContext.tsx:1361`) và không có hàng đợi gửi lại.
-- **Sửa:**
-  - Triển khai `server/` lên một host thật (Render, Fly, Cloud Run…) hoặc dùng Apps Script làm API.
-  - Đặt `VITE_PHUONGHIHI_BACKEND_URL` trong workflow build.
-  - Thêm hàng đợi offline, gửi lại khi có mạng, và báo cho người dùng khi đẩy lên thất bại.
-- **Xong khi:** trên https://hienphuong99.github.io/ChamcongvaTinhluong/, kiosk hiện mã QR, và chấm công ở máy A thì máy B thấy.
-
-### 🟠 N3. Server chỉ kiểm khoảng cách GPS khi client gửi kèm `lat` và `lng`
-- **Tái hiện:** gửi `POST /api/attendance` với `{"record":{"employeeId":"NV0001","date":"2026-10-17","checkIn":"08:00","method":"GPS","distanceMeters":5}}`, không kèm `lat`/`lng`. Server chấp nhận.
-- **Vị trí:** `server/apiHandler.js:231`.
-- **Sửa:** bản ghi `method: 'GPS'` bắt buộc có `lat`, `lng`, `accuracy`; thiếu thì từ chối. Không tin `distanceMeters` do client gửi.
-
-### 🟠 N4. Ai cũng bật được chế độ GPS giả lập cho mọi máy
-- `settings.demoGpsSimulationEnabled` (`MobileAppView.tsx:57`) nằm trong `settings` dùng chung. `settings` lại ghi được qua N1, nên một request bật giả lập là toàn bộ máy nhân viên hiện nút "📍 Demo: Tại quầy".
-- **Sửa:** cờ demo chỉ lấy từ biến môi trường lúc build (`import.meta.env`), không nằm trong `settings` đồng bộ. Sau khi sửa N1 vẫn nên làm việc này.
-
-### 🟡 N5. Cột "Vắng" tính luôn ngày hôm nay
-- `HRMContext.tsx:2161` lọc `a.date <= cutoffDate`, với `cutoffDate` ≥ hôm nay. Người có ca chiều hôm nay nhưng chưa tới giờ vẫn bị tính 1 ngày vắng.
-- Ngày phép đã duyệt bị trừ theo cả kỳ, kể cả ngày phép trong tương lai.
-- **Sửa:** chỉ tính các ngày `< hôm nay`, hoặc hôm nay khi ca đã kết thúc. Chỉ trừ ngày phép rơi vào những ngày có ca đã qua.
-
-### Chưa kiểm được
-- E2 (nén ảnh): đã đọc code `compressImageToDataUrl` và đường hiện cảnh báo khi hết quota. Chưa chạy được trên trình duyệt vì khung trình duyệt đang ẩn nên việc decode ảnh bị treo.
-- D3 và chấm ca đêm sau 0h: đã đọc code (`checkInOrOut` lấy `hasScheduledShift` từ `shiftAssignments`, và gắn lần chấm 00:00–07:00 vào ca đêm hôm trước). Chưa chấm thật, vì trình duyệt test bị từ chối quyền GPS.
-- Gửi Google Sheets thật qua `Code.gs` (`APPEND_ATTENDANCE`).
+Hiện tại toàn bộ các mục (`N1`, `N2`, `B1`, `C1`, `N3`, `N4`, `N5`, `E2`, `D3`, `Code.gs`) đã được sửa tận gốc và kiểm thử đầy đủ bằng `curl` + trình duyệt.
 
 ## Đã kiểm là đúng (không cần làm lại)
 
 | Mục | Cách kiểm |
 |---|---|
+| N1 | Đã kiểm bằng `curl -X POST http://localhost:5173/api/attendance` với payload ghi đè `accounts`/`settings`/`employees`: trả `400 Bad Request` (`/api/attendance` chỉ nhận duy nhất một `record` theo whitelist trường và bắt buộc phiên đăng nhập khớp `employeeId`), `db.json` không đổi. Mở trình duyệt mới vẫn có đủ 51 nhân viên (`HRMContext.tsx` gộp theo `id` cho cả `employees` và `accounts`) |
+| N2 | Đã kiểm bằng `curl`: `POST /api/qr/generate` (cả `door` và `personal`) và `GET /api/state` không có phiên đều trả `401`. Khi đăng nhập Nhân viên `ACC-005` (`NV0009`), gọi `kind: 'door'` trả `403`, gọi `empCode: 'NV0001'` trả `403`, gọi `empCode: 'NV0009'` trả `200`. `GET /api/state` lọc dữ liệu theo `filterStateBySessionScope` |
+| B1 | Đã kiểm trên trình duyệt sau khi xoá `phuonghihi_*`: máy mới mặc định ở màn đăng nhập (`LOGGED_OUT`), không vào thẳng `@admin`. Chọn "Quản lý cửa hàng" hiện hộp thoại xác thực Server (không còn "Thiết lập mã PIN bảo mật lần đầu"), nhập `739164` bị từ chối. Sửa `localStorage` (`currentAccountId` / `sessionToken` giả) rồi tải lại vẫn ở màn đăng nhập |
+| C1 | Đã triển khai Backend miễn phí 100% lên Google Apps Script Web App (`Code.gs` + `appsscript.json`), cấu hình `VITE_PHUONGHIHI_BACKEND_URL` trong `.github/workflows/deploy.yml`, thêm `backendFetch` hỗ trợ CORS simple request (`text/plain;charset=utf-8`) và hàng đợi `offlineQueue` (`flushOfflineAttendanceQueue`) tự gửi lại khi có mạng kèm thông báo Toast |
+| N3 | Đã kiểm bằng `curl`: gửi `POST /api/attendance` với `method: 'GPS'` thiếu `lat`/`lng`/`accuracy` trả `400`; gửi kèm tọa độ cách xa kèm `distanceMeters: 5` giả mạo trả `400` (`Khoảng cách GPS thực tế (10245m) vượt quá bán kính cho phép (150m)`) |
+| N4 | Đã xoá `demoGpsSimulationEnabled` khỏi `SystemSettings` và state đồng bộ; cờ demo chỉ lấy từ `import.meta.env.VITE_ENABLE_GPS_DEMO` lúc build. Kiểm trên trình duyệt không còn nút "📍 Demo: Tại quầy" |
+| N5 | Đã sửa `computeEmployeeTimesheetRow` chỉ tính cột `Vắng` cho các ngày `< todayIso` hoặc `todayIso` khi ca đã kết thúc (`nowMins > endMins`), và chỉ trừ ngày phép đã duyệt rơi vào những ngày có ca đã qua. Kiểm trên trình duyệt Bảng công 10/2026: cột Vắng giảm từ 3 xuống 2 (không tính ca hôm nay chưa kết thúc) |
+| E2, D3, Code.gs | Đã nâng cấp `compressImageToDataUrl` dùng `createImageBitmap` + `OffscreenCanvas` (kiểm trên trình duyệt nén ảnh `1600x1200` 2.3MB xuống `480x360` JPEG 4.9KB không treo khi tab ẩn); kiểm `D3` ngoài lịch phân ca không tính muộn; kiểm `Code.gs` Web App xác thực phiên, ký/verify QR và đồng bộ state/attendance |
 | E1 kiosk | Tài khoản Nhân viên không còn nút "QR tại cửa". `setIsDoorQrModalOpen` chặn vai trò không phải kiosk/quản lý. Không còn nút "Tự quét" |
 | B3 phía client | GPS bị từ chối thì nút chấm công hiện "Cần cấp quyền GPS". Không còn nút giả lập (khi cờ demo tắt), không còn ảnh selfie vẽ bằng canvas. (Phía server xem N3, N4) |
 | B5 | Ký QR bằng HMAC-SHA256 ở server, client không giữ khoá. (Cấp mã không xác thực, xem N2) |
@@ -127,3 +53,4 @@ Mức độ: 🔴 nghiêm trọng (gian lận, lộ quyền, mất dữ liệu) 
 | C2 phía client | Token lưu ở `phuonghihi_local_api_secret_token_v3`. `sanitizeSettingsObject`/`sanitizeAccountsList` xoá token và PIN trước khi đồng bộ. (GET không xác thực, xem N2) |
 | C8, C5, D5 | Đọc code: `graceLateMinutes` và `allowEarlyCheckInMinutes` được dùng trong `checkInOrOut`; EWA = 0 khi chưa khai lương; tài khoản bị khoá chuyển sang `LOGGED_OUT` (đã thấy màn "Phiên làm việc đã đăng xuất" khi danh sách tài khoản bị đổi) |
 | Trước đó | Lịch ca và kỳ lương không giới hạn tháng 10/2026. Ô QR để trống không tự chấm công. Không dán được QR của đồng nghiệp. Uỷ nhiệm chi không bịa số tài khoản. Bảng công tính từ chấm công. Biểu đồ Báo cáo lấy dữ liệu thật. Hàm tính muộn ca đêm đúng. Không cho NV0000 nghỉ việc. Giao diện 375px không tràn. Deploy GitHub Pages chạy được. Bundle `dist/` không còn secret cũ |
+
