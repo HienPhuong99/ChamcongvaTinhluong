@@ -35,12 +35,14 @@ export const Topbar: React.FC = () => {
     accounts,
     currentAccount,
     isLoggedOut,
+    mustChangePin,
     logoutAccount,
     offlineQueueCount,
     flushOfflineAttendanceQueue,
     pendingAuthAccountId,
     setPendingAuthAccountId,
     switchAccount,
+    changeOwnServerPin,
     resetDemoData,
   } = useHRM();
 
@@ -49,6 +51,11 @@ export const Topbar: React.FC = () => {
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [currentPinForChange, setCurrentPinForChange] = useState('');
+  const [newPinForChange, setNewPinForChange] = useState('');
+  const [confirmPinForChange, setConfirmPinForChange] = useState('');
+  const [changePinError, setChangePinError] = useState('');
+  const [isChangingOwnPin, setIsChangingOwnPin] = useState(false);
 
   const scopedIds = new Set(scopedEmployees.map((e) => e.id));
   const pendingCount = requests.filter(
@@ -68,12 +75,46 @@ export const Topbar: React.FC = () => {
     if (!pendingAuthAccountId || isAuthenticating) return;
     setIsAuthenticating(true);
     try {
-      const ok = await switchAccount(pendingAuthAccountId, pinInput);
+      const enteredPin = pinInput;
+      const ok = await switchAccount(pendingAuthAccountId, enteredPin);
       if (ok) {
+        setCurrentPinForChange(enteredPin);
+        setNewPinForChange('');
+        setConfirmPinForChange('');
+        setChangePinError('');
         setPinInput('');
       }
     } finally {
       setIsAuthenticating(false);
+    }
+  };
+
+  const handleMandatoryChangePin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isChangingOwnPin) return;
+    setChangePinError('');
+    if (!currentPinForChange.trim() || !newPinForChange.trim()) {
+      setChangePinError('Vui lòng nhập đầy đủ mật khẩu hiện tại và mật khẩu mới.');
+      return;
+    }
+    if (newPinForChange.trim().length < 6) {
+      setChangePinError('Mật khẩu mới phải có tối thiểu 6 ký tự.');
+      return;
+    }
+    if (newPinForChange.trim() !== confirmPinForChange.trim()) {
+      setChangePinError('Mật khẩu xác nhận không khớp với mật khẩu mới.');
+      return;
+    }
+    setIsChangingOwnPin(true);
+    try {
+      const ok = await changeOwnServerPin(currentPinForChange.trim(), newPinForChange.trim());
+      if (ok) {
+        setCurrentPinForChange('');
+        setNewPinForChange('');
+        setConfirmPinForChange('');
+      }
+    } finally {
+      setIsChangingOwnPin(false);
     }
   };
 
@@ -345,6 +386,105 @@ export const Topbar: React.FC = () => {
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 transition shadow-xs"
               >
                 {isAuthenticating ? 'Đang xác thực...' : 'Xác thực & Đăng nhập'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Mandatory First-Login Password / PIN Change Modal (Issue M3) */}
+      {!isLoggedOut && mustChangePin && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleMandatoryChangePin}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl border border-amber-300 max-w-md w-full p-5 animate-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Bắt buộc đổi mật khẩu ở lần đăng nhập đầu
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Vì lý do bảo mật, vui lòng thiết lập mật khẩu / mã PIN cá nhân mới trước khi sử dụng hệ thống.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3.5 p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-xs text-slate-700 space-y-1">
+              <div className="font-bold text-slate-900">
+                {currentAccount.name}{' '}
+                <span className="font-mono text-blue-600 font-normal">
+                  ({currentAccount.username})
+                </span>
+              </div>
+              <div className="text-slate-600">
+                Mật khẩu khởi tạo hoặc mật khẩu do Quản trị viên cấp lại chỉ dùng một lần để kích hoạt phiên.
+              </div>
+            </div>
+
+            <div className="mt-3.5 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Mật khẩu / Mã PIN hiện tại
+                </label>
+                <input
+                  type="password"
+                  value={currentPinForChange}
+                  onChange={(e) => setCurrentPinForChange(e.target.value)}
+                  placeholder="Nhập mật khẩu vừa dùng để đăng nhập..."
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-blue-600"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Mật khẩu / Mã PIN mới (tối thiểu 6 ký tự)
+                </label>
+                <input
+                  type="password"
+                  autoFocus
+                  value={newPinForChange}
+                  onChange={(e) => setNewPinForChange(e.target.value)}
+                  placeholder="Nhập mật khẩu mới khó đoán..."
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-blue-600"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Xác nhận mật khẩu / Mã PIN mới
+                </label>
+                <input
+                  type="password"
+                  value={confirmPinForChange}
+                  onChange={(e) => setConfirmPinForChange(e.target.value)}
+                  placeholder="Nhập lại mật khẩu mới..."
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-blue-600"
+                />
+              </div>
+              {changePinError && (
+                <p className="text-xs font-medium text-rose-600">{changePinError}</p>
+              )}
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={logoutAccount}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition"
+              >
+                Đăng xuất
+              </button>
+              <button
+                type="submit"
+                disabled={isChangingOwnPin}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 transition shadow-xs"
+              >
+                {isChangingOwnPin ? 'Đang lưu mật khẩu mới...' : 'Lưu mật khẩu mới & Tiếp tục'}
               </button>
             </div>
           </form>

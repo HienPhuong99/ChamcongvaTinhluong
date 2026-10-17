@@ -37,8 +37,7 @@ ChamCongvaTinhLuong.mp4
 # Runtime server DB & secrets
 server/db.json
 server/db.json.tmp
-server/.qr_hmac_secret
-server/.session_hmac_secret
-server/.auth_credentials.json
+server/.*
 google-sheets/.clasp.json
+
 

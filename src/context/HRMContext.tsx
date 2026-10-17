@@ -110,6 +110,7 @@ export interface HRMContextType {
   accounts: UserAccount[];
   currentAccount: UserAccount;
   isLoggedOut: boolean;
+  mustChangePin: boolean;
   logoutAccount: () => void;
   auditLogs: AuditLogEntry[];
   announcements: Announcement[];
@@ -137,6 +138,7 @@ export interface HRMContextType {
   // Actions
   switchAccount: (accountId: string, pinOrPassword?: string) => Promise<boolean>;
   setAccountServerPin: (targetAccountId: string, newPin: string) => Promise<boolean>;
+  changeOwnServerPin: (currentPin: string, newPin: string) => Promise<boolean>;
   assignShift: (employeeId: string, date: string, shiftCode: ShiftCode | null) => void;
   bulkAssignShifts: (employeeIds: string[], dates: string[], shiftCode: ShiftCode | null) => void;
   autoScheduleWeekWithAI: (dates: string[]) => { assignedCount: number; skippedLeaveCount: number };
@@ -352,6 +354,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Issue B1: New browsers ALWAYS start in LOGGED_OUT state (authenticatedAccount = null).
   // Account session is strictly verified by the server using an HMAC-signed sessionToken.
   const [authenticatedAccount, setAuthenticatedAccount] = useState<UserAccount | null>(null);
+  const [mustChangePin, setMustChangePin] = useState<boolean>(false);
   const [offlineQueue, setOfflineQueue] = useState<AttendanceRecord[]>(() => {
     try {
       const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
@@ -445,6 +448,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     if (authenticatedAccount && !activeCurrentAccount) {
       setAuthenticatedAccount(null);
+      setMustChangePin(false);
       setLocalSessionToken(null);
     }
   }, [authenticatedAccount, activeCurrentAccount]);
@@ -472,6 +476,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }).catch(() => {});
     setLocalSessionToken(null);
     setAuthenticatedAccount(null);
+    setMustChangePin(false);
     setIsDoorQrModalOpenState(false);
   }, [settings.backendApiUrl]);
 
@@ -724,6 +729,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const token = getLocalSessionToken();
     if (!token) {
       setAuthenticatedAccount(null);
+      setMustChangePin(false);
       return;
     }
     let cancelled = false;
@@ -737,15 +743,18 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const data = await res.json();
           if (data && data.ok && data.account && data.account.active) {
             setAuthenticatedAccount(data.account as UserAccount);
+            setMustChangePin(Boolean(data.mustChangePin || data.account.mustChangePin));
             return;
           }
         }
         setLocalSessionToken(null);
         setAuthenticatedAccount(null);
+        setMustChangePin(false);
       })
       .catch(() => {
         if (!cancelled) {
           setAuthenticatedAccount(null);
+          setMustChangePin(false);
         }
       });
     return () => {
@@ -753,7 +762,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [getBackendEndpoint]);
 
-  // Issue C1: Flush offline attendance queue when online and authenticated
+  // Issue C1 & M2: Flush offline attendance queue when online and authenticated (only send allowed input fields)
   const flushOfflineAttendanceQueue = useCallback(async (): Promise<number> => {
     if (offlineQueue.length === 0) return 0;
     const hasAuth = Boolean(getLocalSessionToken() || getLocalApiSecretToken());
@@ -764,11 +773,23 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     for (const item of offlineQueue) {
       try {
+        const cleanInputRecord = {
+          id: item.id,
+          employeeId: item.employeeId,
+          date: item.date,
+          ...(item.shiftCode ? { shiftCode: item.shiftCode } : {}),
+          method: item.method || 'GPS',
+          ...(typeof item.lat === 'number' ? { lat: item.lat } : {}),
+          ...(typeof item.lng === 'number' ? { lng: item.lng } : {}),
+          ...(typeof item.gpsAccuracy === 'number' ? { gpsAccuracy: item.gpsAccuracy } : {}),
+          ...(item.photoUrl ? { photoUrl: item.photoUrl } : {}),
+          ...(item.note ? { note: item.note } : {}),
+        };
         const res = await backendFetch(getBackendEndpoint('/api/attendance'), {
           method: 'POST',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
-            record: item,
+            record: cleanInputRecord,
             ...(typeof item.lat === 'number' ? { lat: item.lat } : {}),
             ...(typeof item.lng === 'number' ? { lng: item.lng } : {}),
             ...(typeof item.gpsAccuracy === 'number' ? { accuracy: item.gpsAccuracy } : {}),
@@ -1206,6 +1227,8 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setLocalSessionToken(data.sessionToken);
       setAuthenticatedAccount(data.account as UserAccount);
+      const requireChange = Boolean(data.mustChangePin || data.account?.mustChangePin);
+      setMustChangePin(requireChange);
       setPendingAuthAccountId(null);
       if (data.account.roleId === 'door_kiosk') {
         setIsDoorQrModalOpenState(true);
@@ -1217,9 +1240,11 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         target.email
       );
       showToast(
-        `Đã xác thực & đăng nhập: ${target.name}`,
+        requireChange
+          ? `Đã đăng nhập ${target.name} — Vui lòng đổi mật khẩu lần đầu!`
+          : `Đã xác thực & đăng nhập: ${target.name}`,
         `Phạm vi dữ liệu: ${target.dataScope}${target.department ? ` (${target.department})` : ''}`,
-        'info'
+        requireChange ? 'warning' : 'info'
       );
       pullStateFromBackend(true);
       flushOfflineAttendanceQueue();
@@ -1264,6 +1289,9 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.ok) {
+        if (targetAccountId === currentAccount.id) {
+          setMustChangePin(false);
+        }
         addAuditLog(
           'Cấp / Đổi mã PIN bảo mật',
           'Phân quyền',
@@ -1285,6 +1313,67 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast(
         'Lỗi kết nối máy chủ!',
         'Không thể gửi yêu cầu cấp mã PIN lên Server.',
+        'warning'
+      );
+      return false;
+    }
+  };
+
+  // Issue M3: Allow authenticated user to change their own initial/current password
+  const changeOwnServerPin = async (
+    currentPin: string,
+    newPin: string
+  ): Promise<boolean> => {
+    if (isLoggedOut) return false;
+    const cleanCurrent = currentPin.trim();
+    const cleanNew = newPin.trim();
+    if (!cleanCurrent || !cleanNew) {
+      showToast('Vui lòng nhập đầy đủ mật khẩu hiện tại và mật khẩu mới!', undefined, 'warning');
+      return false;
+    }
+    if (cleanCurrent === cleanNew) {
+      showToast('Mật khẩu mới phải khác mật khẩu hiện tại!', undefined, 'warning');
+      return false;
+    }
+    const weakErr = isWeakOrForbiddenPin(cleanNew, currentAccount.username);
+    if (weakErr) {
+      showToast('Mật khẩu / Mã PIN mới không hợp lệ!', weakErr, 'warning');
+      return false;
+    }
+    try {
+      const res = await backendFetch(getBackendEndpoint('/api/auth/change-pin'), {
+        method: 'POST',
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          targetAccountId: currentAccount.id,
+          currentPin: cleanCurrent,
+          newPin: cleanNew,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.ok) {
+        setMustChangePin(false);
+        addAuditLog(
+          'Đổi mật khẩu cá nhân',
+          'Phân quyền',
+          `${currentAccount.name} (${currentAccount.username})`
+        );
+        showToast(
+          'Đã đổi mật khẩu thành công!',
+          'Mật khẩu mới của bạn đã được mã hoá và lưu trên Server.'
+        );
+        return true;
+      }
+      showToast(
+        'Đổi mật khẩu thất bại!',
+        data?.error || 'Mật khẩu hiện tại không đúng hoặc máy chủ từ chối.',
+        'warning'
+      );
+      return false;
+    } catch {
+      showToast(
+        'Lỗi kết nối máy chủ!',
+        'Không thể gửi yêu cầu đổi mật khẩu lên Server.',
         'warning'
       );
       return false;
@@ -1671,14 +1760,26 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [...prev, upsertedRecord];
     });
 
-    // Issue C1 & N1 & N3: Push attendance record with session auth; if offline/failed, enqueue & notify user
+    // Issue C1, N1, N3, M1, M2: Push only allowed attendance input fields; server assigns date/time and computes status/lateMinutes/otHours
     let pushedToServer = false;
     try {
+      const cleanInputRecord = {
+        id: upsertedRecord.id,
+        employeeId: upsertedRecord.employeeId,
+        date: upsertedRecord.date,
+        ...(upsertedRecord.shiftCode ? { shiftCode: upsertedRecord.shiftCode } : {}),
+        method: upsertedRecord.method || 'GPS',
+        ...(typeof upsertedRecord.lat === 'number' ? { lat: upsertedRecord.lat } : {}),
+        ...(typeof upsertedRecord.lng === 'number' ? { lng: upsertedRecord.lng } : {}),
+        ...(typeof upsertedRecord.gpsAccuracy === 'number' ? { gpsAccuracy: upsertedRecord.gpsAccuracy } : {}),
+        ...(upsertedRecord.photoUrl ? { photoUrl: upsertedRecord.photoUrl } : {}),
+        ...(upsertedRecord.note ? { note: upsertedRecord.note } : {}),
+      };
       const res = await backendFetch(getBackendEndpoint('/api/attendance'), {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          record: upsertedRecord,
+          record: cleanInputRecord,
           lat,
           lng,
           accuracy: gpsAccuracy,
@@ -1687,6 +1788,17 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       if (res.ok) {
         pushedToServer = true;
+        const resData = await res.json().catch(() => null);
+        if (resData?.record && resData.record.employeeId) {
+          const serverRec = resData.record as AttendanceRecord;
+          setAttendanceRecords((prev) =>
+            prev.map((r) =>
+              r.employeeId === serverRec.employeeId && r.date === serverRec.date
+                ? { ...r, ...serverRec }
+                : r
+            )
+          );
+        }
       }
     } catch {
       pushedToServer = false;
@@ -3359,6 +3471,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         accounts,
         currentAccount,
         isLoggedOut,
+        mustChangePin,
         logoutAccount,
         auditLogs,
         announcements,
@@ -3383,6 +3496,7 @@ export const HRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setPendingAuthAccountId,
         switchAccount,
         setAccountServerPin,
+        changeOwnServerPin,
         assignShift,
         bulkAssignShifts,
         autoScheduleWeekWithAI,

@@ -20,6 +20,7 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 const QR_SECRET_FILE = path.join(DATA_DIR, '.qr_hmac_secret');
 const SESSION_SECRET_FILE = path.join(DATA_DIR, '.session_hmac_secret');
 const AUTH_CREDENTIALS_FILE = path.join(DATA_DIR, '.auth_credentials.json');
+const INITIAL_CREDENTIALS_FILE = path.join(DATA_DIR, '.initial_credentials.json');
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB limit
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -28,6 +29,8 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 const ipBuckets = new Map();
 const revokedSessionTokens = new Set();
+// Issue M2: Track used Door QR tokens per employee so each token can only be used once per employee
+const usedDoorQrTokens = new Map();
 
 const FORBIDDEN_KEYS = new Set([
   '__proto__',
@@ -70,7 +73,25 @@ const ALLOWED_STATE_KEYS = new Set([
   'mode',
 ]);
 
-const ALLOWED_ATTENDANCE_RECORD_KEYS = new Set([
+// Issue M2: Strict input whitelist for POST /api/attendance
+// Server assigns checkIn/checkOut/date and calculates status, lateMinutes, otHours, distanceMeters
+const ALLOWED_ATTENDANCE_INPUT_KEYS = new Set([
+  'id',
+  'employeeId',
+  'date',
+  'shiftCode',
+  'method',
+  'lat',
+  'lng',
+  'gpsAccuracy',
+  'accuracy',
+  'photoUrl',
+  'note',
+  'qrToken',
+]);
+
+// Full record keys allowed when reading/merging persisted state records
+const ALLOWED_PERSISTED_ATTENDANCE_KEYS = new Set([
   'id',
   'employeeId',
   'date',
@@ -89,7 +110,6 @@ const ALLOWED_ATTENDANCE_RECORD_KEYS = new Set([
   'lng',
   'photoUrl',
   'note',
-  'qrToken',
 ]);
 
 const ALLOWED_ATTENDANCE_METHODS = new Set([
@@ -99,6 +119,31 @@ const ALLOWED_ATTENDANCE_METHODS = new Set([
   'Máy vân tay',
   'Chấm công hộ',
 ]);
+
+const SERVER_SHIFT_TEMPLATES = {
+  hanh_chinh: { code: 'hanh_chinh', name: 'Hành chính', startTime: '08:00', endTime: '17:30', workDays: 1.0 },
+  sang: { code: 'sang', name: 'Sáng', startTime: '06:00', endTime: '14:00', workDays: 1.0 },
+  chieu: { code: 'chieu', name: 'Chiều', startTime: '14:00', endTime: '22:00', workDays: 1.0 },
+  dem: { code: 'dem', name: 'Đêm', startTime: '22:00', endTime: '06:00', workDays: 1.0 },
+  ca_gay: { code: 'ca_gay', name: 'Ca gãy', startTime: '08:00', endTime: '21:00', workDays: 1.5 },
+};
+
+const DEFAULT_SERVER_SETTINGS = {
+  gpsEnabled: true,
+  requirePhotoOnGps: true,
+  qrEnabled: true,
+  qrScreen45s: true,
+  qrPrintedAtDoor: false,
+  qrManagerScanEmployee: false,
+  remoteEnabled: true,
+  biometricEnabled: false,
+  manualProxyEnabled: true,
+  officeLat: 10.7728,
+  officeLng: 106.6988,
+  allowedRadiusMeters: 150,
+  graceLateMinutes: 5,
+  allowEarlyCheckInMinutes: 45,
+};
 
 // Built-in server account directory (merged with db.state.accounts)
 const DEFAULT_SERVER_ACCOUNTS = [
@@ -168,33 +213,70 @@ const DEFAULT_SERVER_ACCOUNTS = [
   },
 ];
 
-// One-way PBKDF2-SHA256 (100,000 iterations) credential hashes for server-side authentication (Issue B1)
-const DEFAULT_CREDENTIAL_HASHES = {
-  'ACC-001': {
-    salt: 'd5c94e35947dbfb87b118edf9c2d81c6',
-    hash: '2b206f08b04ed5b2c586e681f2ec634cd0e348b415ad94efac0a32f29c0499c6',
-  },
-  'ACC-002': {
-    salt: '7e6a13de008ce11e9ce9961b8923a93f',
-    hash: 'fdf0049a0f9b6aaef26a5360c089947a2ec66c663ea5a122abf1e166e7e9ea58',
-  },
-  'ACC-003': {
-    salt: '74f67d4d21e763ca1e72b5bcf5ede4be',
-    hash: '6fbc090af76eb4f4d72e4461e683c793cfb37ad69f70626900d7123489aa8387',
-  },
-  'ACC-004': {
-    salt: '8cdd80d0c1da8fa7c386dd9cb746df15',
-    hash: '986ee16e560e6bda57d7cec48cfaef46f17d411178b88e091b5cb9cdd7db383b',
-  },
-  'ACC-005': {
-    salt: '4e82eec8dce9b46ab0d46e92051c0449',
-    hash: 'f6f700d27241978ad489e91ca25328201c582f61747863946d5f0581293187e6',
-  },
-  'ACC-006': {
-    salt: 'f085532967649129b06bbebc04eb0dab',
-    hash: '95532e5f884a9f0f3e27a3a7aacb21b22d852d800df65097cf7b15cb88b87f7d',
-  },
-};
+// Built-in employee directory metadata so server can enforce department & allowRemote even before full state sync (Issue M2)
+const RAW_SERVER_EMPLOYEES = [
+  ['NV0000', 'Quản lý cửa hàng (phuonghihi)', 'Phòng ban chung', 'Chính thức'],
+  ['NV0001', 'Nguyễn Minh Anh', 'Nhân sự', 'Chính thức'],
+  ['NV0002', 'Trần Thị Thu Hà', 'Kỹ thuật', 'Chính thức'],
+  ['NV0003', 'Lê Quang Huy', 'Kinh doanh', 'Chính thức'],
+  ['NV0004', 'Phạm Ngọc Lan', 'Kế toán', 'Chính thức'],
+  ['NV0005', 'Nguyễn Văn Đức', 'Vận hành', 'Chính thức'],
+  ['NV0006', 'Hoàng Mai Chi', 'Marketing', 'Chính thức'],
+  ['NV0007', 'Vũ Tuấn Kiệt', 'Kỹ thuật', 'Chính thức'],
+  ['NV0008', 'Đặng Thu Trang', 'Nhân sự', 'Chính thức'],
+  ['NV0009', 'Bùi Minh Quân', 'Kinh doanh', 'Chính thức'],
+  ['NV0010', 'Vũ Hải Yến', 'Kế toán', 'Chính thức'],
+  ['NV0011', 'Đỗ Văn Nam', 'Kỹ thuật', 'Chính thức'],
+  ['NV0012', 'Bùi Anh Tuấn', 'Vận hành', 'Chính thức'],
+  ['NV0013', 'Trịnh Văn Long', 'Kỹ thuật', 'Chính thức'],
+  ['NV0014', 'Lê Ngọc Mai', 'Marketing', 'Chính thức'],
+  ['NV0015', 'Trần Quốc Bảo', 'Kinh doanh', 'Chính thức'],
+  ['NV0016', 'Ngô Thanh Tùng', 'Kỹ thuật', 'Chính thức'],
+  ['NV0017', 'Lý Thu Thảo', 'Nhân sự', 'Chính thức'],
+  ['NV0018', 'Phan Minh Đức', 'Vận hành', 'Chính thức'],
+  ['NV0019', 'Hồ Bích Ngọc', 'Kế toán', 'Chính thức'],
+  ['NV0020', 'Dương Gia Bảo', 'Kinh doanh', 'Chính thức'],
+  ['NV0021', 'Võ Hoài Nam', 'Kỹ thuật', 'Chính thức'],
+  ['NV0022', 'Đoàn Khánh Linh', 'Marketing', 'Chính thức'],
+  ['NV0023', 'Tạ Quang Minh', 'Kỹ thuật', 'Chính thức'],
+  ['NV0024', 'Lương Hải Đăng', 'Vận hành', 'Chính thức'],
+  ['NV0025', 'Cao Thị Tuyết', 'Kinh doanh', 'Chính thức'],
+  ['NV0026', 'Hà Minh Trí', 'Kỹ thuật', 'Chính thức'],
+  ['NV0027', 'Chu Phương Anh', 'Marketing', 'Chính thức'],
+  ['NV0028', 'Đinh Gia Hân', 'Nhân sự', 'Chính thức'],
+  ['NV0029', 'Đỗ Anh Khoa', 'Kỹ thuật', 'Chính thức'],
+  ['NV0030', 'Mai Tuấn Anh', 'Vận hành', 'Chính thức'],
+  ['NV0031', 'Lê Hải An', 'Kinh doanh', 'Chính thức'],
+  ['NV0032', 'Trần Quang An 32', 'Kinh doanh', 'Chính thức'],
+  ['NV0033', 'Nguyễn Thuỳ Dương', 'Kế toán', 'Chính thức'],
+  ['NV0034', 'Phạm Quang An 34', 'Kế toán', 'Chính thức'],
+  ['NV0035', 'Trương Quốc Khánh', 'Kỹ thuật', 'Chính thức'],
+  ['NV0036', 'Bùi Quang An 36', 'Kỹ thuật', 'Chính thức'],
+  ['NV0037', 'Đặng Quang An 37', 'Vận hành', 'Chính thức'],
+  ['NV0038', 'Lâm Bảo Ngọc', 'Marketing', 'Chính thức'],
+  ['NV0039', 'Đỗ Quang An 39', 'Kinh doanh', 'Chính thức'],
+  ['NV0040', 'Kiều Minh Tuấn', 'Vận hành', 'Chính thức'],
+  ['NV0041', 'Phùng Thanh Hằng', 'Nhân sự', 'Chính thức'],
+  ['NV0042', 'Bùi Thanh Sơn', 'Nhân sự', 'Chính thức'],
+  ['NV0043', 'Vương Đình Hiếu', 'Kỹ thuật', 'Thử việc'],
+  ['NV0044', 'Tô Ngọc Ánh', 'Kinh doanh', 'Thử việc'],
+  ['NV0045', 'Hoàng Thu An 45', 'Marketing', 'Thử việc'],
+  ['NV0046', 'Nghiêm Xuân Phúc', 'Vận hành', 'Thử việc'],
+  ['NV0047', 'Đặng Thu An 47', 'Kỹ thuật', 'Thử việc'],
+  ['NV0048', 'Bùi Thu An 48', 'Marketing', 'Thử việc'],
+  ['NV0049', 'Đoàn Minh Khôi', 'Vận hành', 'Tạm nghỉ'],
+  ['NV0050', 'Đỗ Thu An 50', 'Vận hành', 'Đã nghỉ'],
+];
+
+const DEFAULT_SERVER_EMPLOYEES = RAW_SERVER_EMPLOYEES.map(([code, name, department, status], idx) => ({
+  id: code,
+  code,
+  name,
+  department,
+  status,
+  // Issue M2: NV0009 (retail counter staff) defaults to allowRemote: false
+  allowRemote: code !== 'NV0009' && idx % 3 === 0,
+}));
 
 function getOrCreateSecretFile(envVarName, filePath, fallbackSeed) {
   if (process.env[envVarName] && String(process.env[envVarName]).trim().length >= 16) {
@@ -225,30 +307,91 @@ const SERVER_SESSION_SECRET = getOrCreateSecretFile(
   'PHUONGHIHI_SERVER_SESSION_HMAC_KEY_V3'
 );
 
-function readAuthCredentials() {
-  const merged = { ...DEFAULT_CREDENTIAL_HASHES };
+// Issue M3: Never store default password hashes in source code.
+// On first run, generate random passwords per account and store in gitignored local files / env.
+function ensureServerAuthCredentials() {
+  let creds = {};
   try {
     if (fs.existsSync(AUTH_CREDENTIALS_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(AUTH_CREDENTIALS_FILE, 'utf8'));
       if (parsed && typeof parsed === 'object') {
-        for (const [k, v] of Object.entries(parsed)) {
-          if (v && typeof v === 'object' && typeof v.salt === 'string' && typeof v.hash === 'string') {
-            merged[k] = { salt: v.salt, hash: v.hash };
-          }
-        }
+        creds = parsed;
       }
     }
   } catch {
-    // ignore read error
+    creds = {};
   }
-  return merged;
+
+  let initialPlain = {};
+  try {
+    if (fs.existsSync(INITIAL_CREDENTIALS_FILE)) {
+      const parsedPlain = JSON.parse(fs.readFileSync(INITIAL_CREDENTIALS_FILE, 'utf8'));
+      if (parsedPlain && typeof parsedPlain === 'object') {
+        initialPlain = parsedPlain;
+      }
+    }
+  } catch {
+    initialPlain = {};
+  }
+
+  let changed = false;
+  for (const acc of DEFAULT_SERVER_ACCOUNTS) {
+    const existing = creds[acc.id];
+    if (existing && typeof existing.salt === 'string' && typeof existing.hash === 'string') {
+      continue;
+    }
+    const envKey = `PHUONGHIHI_INITIAL_PIN_${acc.id.replace('-', '_')}`;
+    const rawPin =
+      (process.env[envKey] && String(process.env[envKey]).trim().length >= 6
+        ? String(process.env[envKey]).trim()
+        : '') ||
+      initialPlain[acc.id] ||
+      `Ph!${crypto.randomBytes(9).toString('base64url')}`;
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.pbkdf2Sync(rawPin, salt, 100000, 32, 'sha256').toString('hex');
+    creds[acc.id] = {
+      salt,
+      hash,
+      mustChangePin: acc.roleId !== 'door_kiosk',
+      updatedAt: new Date().toISOString(),
+    };
+    initialPlain[acc.id] = rawPin;
+    changed = true;
+  }
+
+  if (changed) {
+    try {
+      fs.writeFileSync(AUTH_CREDENTIALS_FILE, JSON.stringify(creds, null, 2), {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      fs.writeFileSync(INITIAL_CREDENTIALS_FILE, JSON.stringify(initialPlain, null, 2), {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+    } catch {
+      // ignore write error on read-only fs
+    }
+  }
+
+  return creds;
 }
 
-function writeAuthCredential(accountId, rawPin) {
+function readAuthCredentials() {
+  return ensureServerAuthCredentials();
+}
+
+function writeAuthCredential(accountId, rawPin, mustChangePin = false) {
   const all = readAuthCredentials();
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.pbkdf2Sync(String(rawPin).trim(), salt, 100000, 32, 'sha256').toString('hex');
-  all[accountId] = { salt, hash };
+  all[accountId] = {
+    salt,
+    hash,
+    mustChangePin: Boolean(mustChangePin),
+    updatedAt: new Date().toISOString(),
+  };
   try {
     fs.writeFileSync(AUTH_CREDENTIALS_FILE, JSON.stringify(all, null, 2), {
       encoding: 'utf8',
@@ -261,17 +404,21 @@ function writeAuthCredential(accountId, rawPin) {
 
 export function verifyServerAccountPin(accountId, rawPin) {
   const cleanPin = String(rawPin || '').trim();
-  if (!cleanPin || cleanPin.length < 6) return false;
+  if (!cleanPin || cleanPin.length < 6) return { valid: false, mustChangePin: false };
   const creds = readAuthCredentials();
   const target = creds[accountId];
-  if (!target || !target.salt || !target.hash) return false;
+  if (!target || !target.salt || !target.hash) return { valid: false, mustChangePin: false };
   try {
     const computed = crypto.pbkdf2Sync(cleanPin, target.salt, 100000, 32, 'sha256');
     const expected = Buffer.from(target.hash, 'hex');
-    if (computed.length !== expected.length) return false;
-    return crypto.timingSafeEqual(computed, expected);
+    if (computed.length !== expected.length) return { valid: false, mustChangePin: false };
+    const match = crypto.timingSafeEqual(computed, expected);
+    return {
+      valid: match,
+      mustChangePin: match ? Boolean(target.mustChangePin) : false,
+    };
   } catch {
-    return false;
+    return { valid: false, mustChangePin: false };
   }
 }
 
@@ -295,7 +442,152 @@ export function getEffectiveServerAccounts(dbState = null) {
   return Array.from(map.values());
 }
 
-export function signSessionToken(account) {
+export function getEffectiveServerEmployees(dbState = null) {
+  const state = dbState || readDb().state || {};
+  const map = new Map();
+  for (const emp of DEFAULT_SERVER_EMPLOYEES) {
+    map.set(emp.id, { ...emp });
+  }
+  if (Array.isArray(state.employees)) {
+    for (const emp of state.employees) {
+      if (emp && typeof emp === 'object' && emp.id) {
+        const existing = map.get(emp.id);
+        map.set(emp.id, { ...(existing || {}), ...emp });
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
+export function getEffectiveServerSettings(dbState = null) {
+  const state = dbState || readDb().state || {};
+  return {
+    ...DEFAULT_SERVER_SETTINGS,
+    ...(state.settings && typeof state.settings === 'object' ? state.settings : {}),
+  };
+}
+
+function getDefaultAssignedShiftForEmployeeOnDate(employeeId, dateStr) {
+  const empIdx = RAW_SERVER_EMPLOYEES.findIndex(([code]) => code === employeeId);
+  if (empIdx < 0) return null;
+  if (RAW_SERVER_EMPLOYEES[empIdx][3] === 'Đã nghỉ') return null;
+
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  const jsDay = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sun, 1 = Mon .. 6 = Sat
+  const dayOfWeek = jsDay === 0 ? 6 : jsDay - 1; // 0 = Mon .. 6 = Sun
+
+  const specificPatterns = {
+    NV0000: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null, null],
+    NV0001: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'ca_gay', 'hanh_chinh', null],
+    NV0002: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'chieu', null, null],
+    NV0003: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'dem', null, null],
+    NV0004: ['sang', 'chieu', 'dem', 'sang', 'ca_gay', null, null],
+    NV0005: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'chieu', null, null],
+    NV0006: ['ca_gay', 'ca_gay', 'ca_gay', 'ca_gay', 'chieu', null, null],
+    NV0007: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'ca_gay', null, null],
+    NV0008: [null, 'chieu', 'sang', 'dem', 'dem', null, null],
+    NV0009: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'chieu', null, null],
+    NV0010: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'ca_gay', null, null],
+    NV0011: ['sang', 'sang', 'chieu', 'chieu', 'chieu', null, null],
+    NV0012: ['chieu', 'chieu', 'hanh_chinh', 'hanh_chinh', 'chieu', null, null],
+    NV0013: ['hanh_chinh', 'sang', 'chieu', 'hanh_chinh', 'ca_gay', null, null],
+    NV0014: ['hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', 'hanh_chinh', null, null],
+  };
+
+  if (specificPatterns[employeeId]) {
+    return specificPatterns[employeeId][dayOfWeek] || null;
+  }
+  if (dayOfWeek < 4 || dayOfWeek === 5) {
+    const pool = ['hanh_chinh', 'sang', 'chieu', 'ca_gay', 'dem'];
+    return pool[empIdx % pool.length];
+  }
+  return null;
+}
+
+export function getAssignedShiftForEmployee(employeeId, dateStr, dbState = null) {
+  const state = dbState || readDb().state || {};
+  if (Array.isArray(state.shiftAssignments)) {
+    const found = state.shiftAssignments.find(
+      (a) => a && a.employeeId === employeeId && a.date === dateStr
+    );
+    if (found) {
+      return found.shiftCode || null;
+    }
+  }
+  return getDefaultAssignedShiftForEmployeeOnDate(employeeId, dateStr);
+}
+
+function getVietnamServerNowParts(nowMs = Date.now()) {
+  // Vietnam timezone is UTC+7
+  const vnTime = new Date(nowMs + 7 * 60 * 60 * 1000);
+  const yyyy = vnTime.getUTCFullYear();
+  const mm = String(vnTime.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(vnTime.getUTCDate()).padStart(2, '0');
+  const hh = String(vnTime.getUTCHours()).padStart(2, '0');
+  const min = String(vnTime.getUTCMinutes()).padStart(2, '0');
+
+  const yestTime = new Date(nowMs + 7 * 60 * 60 * 1000 - 24 * 60 * 60 * 1000);
+  const yYyyy = yestTime.getUTCFullYear();
+  const yMm = String(yestTime.getUTCMonth() + 1).padStart(2, '0');
+  const yDd = String(yestTime.getUTCDate()).padStart(2, '0');
+
+  return {
+    todayIso: `${yyyy}-${mm}-${dd}`,
+    yesterdayIso: `${yYyyy}-${yMm}-${yDd}`,
+    timeHHMM: `${hh}:${min}`,
+    hour: vnTime.getUTCHours(),
+  };
+}
+
+function parseTimeToMinsServer(timeStr) {
+  if (!timeStr || typeof timeStr !== 'string') return null;
+  const parts = timeStr.trim().split(':');
+  if (parts.length < 2) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+export function calculateServerLateAndOt(
+  checkIn,
+  checkOut,
+  shiftStart = '08:00',
+  shiftEnd = '17:30',
+  graceMinutes = 5
+) {
+  const inMins = parseTimeToMinsServer(checkIn);
+  const startMins = parseTimeToMinsServer(shiftStart) ?? 480;
+  const outMins = parseTimeToMinsServer(checkOut);
+  const endMins = parseTimeToMinsServer(shiftEnd) ?? 1050;
+  const isOvernightShift = endMins < startMins;
+
+  let lateMinutes = 0;
+  if (inMins !== null) {
+    const adjustedIn = isOvernightShift && inMins < endMins + 180 ? inMins + 1440 : inMins;
+    if (adjustedIn > startMins + graceMinutes) {
+      lateMinutes = adjustedIn - startMins;
+    }
+  }
+
+  let otHours = 0;
+  if (outMins !== null) {
+    const adjustedOut = outMins < startMins && isOvernightShift ? outMins + 1440 : outMins;
+    const adjustedEnd = isOvernightShift ? endMins + 1440 : endMins;
+    if (adjustedOut > adjustedEnd + 15) {
+      otHours = Math.round(((adjustedOut - adjustedEnd) / 60) * 2) / 2;
+    }
+  }
+
+  return {
+    lateMinutes,
+    otHours,
+    status: lateMinutes > 0 ? 'Đi muộn' : 'Đúng giờ',
+  };
+}
+
+export function signSessionToken(account, extra = {}) {
   const now = Date.now();
   const payload = {
     sub: account.id,
@@ -304,6 +596,7 @@ export function signSessionToken(account) {
     role: account.roleId,
     scope: account.dataScope,
     dept: account.department || '',
+    mustChangePin: Boolean(extra.mustChangePin),
     iat: now,
     exp: now + SESSION_TTL_MS,
     jti: crypto.randomBytes(8).toString('hex'),
@@ -340,10 +633,12 @@ export function verifySessionToken(rawToken, dbState = null) {
     if (!payload || typeof payload !== 'object' || !payload.sub) return null;
     if (typeof payload.exp !== 'number' || Date.now() > payload.exp) return null;
 
-    // Verify account still exists and is active on server
     const accounts = getEffectiveServerAccounts(dbState);
     const liveAccount = accounts.find((acc) => acc.id === payload.sub);
     if (!liveAccount || !liveAccount.active) return null;
+
+    const creds = readAuthCredentials();
+    const mustChangePin = Boolean(creds[liveAccount.id]?.mustChangePin);
 
     return {
       sub: liveAccount.id,
@@ -352,6 +647,7 @@ export function verifySessionToken(rawToken, dbState = null) {
       role: liveAccount.roleId,
       scope: liveAccount.dataScope,
       dept: liveAccount.department || '',
+      mustChangePin,
       account: liveAccount,
     };
   } catch {
@@ -380,7 +676,7 @@ function verifySessionFromRequest(req, dbState = null) {
 function hasValidApiSecret(req) {
   const configuredEnvSecret = (process.env.PHUONGHIHI_API_SECRET || '').trim();
   if (!configuredEnvSecret) {
-    return false; // Never open without env secret (Issue N1)
+    return false;
   }
   const headerToken = (req.headers['x-phuonghihi-token'] || '').trim();
   if (!headerToken) return false;
@@ -445,7 +741,7 @@ export function verifyServerQrToken(rawToken, nowMs = Date.now()) {
       if (Math.abs(currentSlot - slot) > 5) {
         return { valid: false, reason: 'Mã QR cá nhân đã quá hạn 5 phút' };
       }
-      return { valid: true, kind: 'personal', empCode: String(parsed.empCode) };
+      return { valid: true, kind: 'personal', empCode: String(parsed.empCode), slot };
     } catch {
       return { valid: false, reason: 'Dữ liệu JSON của mã QR không hợp lệ' };
     }
@@ -469,7 +765,7 @@ export function verifyServerQrToken(rawToken, nowMs = Date.now()) {
   if (Math.abs(currentSlot - slot) > 1) {
     return { valid: false, reason: 'Mã QR tại cửa đã hết hạn sau 45 giây' };
   }
-  return { valid: true, kind: 'door' };
+  return { valid: true, kind: 'door', slot, normalizedToken: clean };
 }
 
 function calculateDistanceMetersServer(lat1, lon1, lat2, lon2) {
@@ -507,7 +803,7 @@ export function stripSecretsAndSanitize(value, depth = 0) {
     return value.slice(0, 2500).map((item) => stripSecretsAndSanitize(item, depth + 1));
   }
   if (typeof value === 'object') {
-    const clean = Object.create(null);
+    const clean = {};
     for (const [k, v] of Object.entries(value)) {
       if (FORBIDDEN_KEYS.has(k)) continue;
       if (depth === 0 && !ALLOWED_STATE_KEYS.has(k)) continue;
@@ -548,7 +844,7 @@ function mergeByKey(existingArr, incomingArr, keyFn) {
 export function filterStateBySessionScope(rawState = {}, session = null) {
   const cleanState = stripSecretsAndSanitize(rawState || {});
   if (!session) {
-    return cleanState; // Admin API token caller
+    return cleanState;
   }
 
   const role = session.role;
@@ -556,7 +852,6 @@ export function filterStateBySessionScope(rawState = {}, session = null) {
   const empId = session.empId;
   const dept = session.dept;
 
-  // super_admin, hr, accountant have full system scope
   if (
     scope === 'Toàn hệ thống' &&
     (role === 'super_admin' || role === 'hr' || role === 'accountant')
@@ -564,7 +859,6 @@ export function filterStateBySessionScope(rawState = {}, session = null) {
     return cleanState;
   }
 
-  // door_kiosk: never return salary, bank account, CCCD, timesheets, payroll or requests
   if (role === 'door_kiosk' || scope === 'Chỉ mở mã QR tại cửa') {
     return {
       settings: cleanState.settings
@@ -578,7 +872,6 @@ export function filterStateBySessionScope(rawState = {}, session = null) {
     };
   }
 
-  // manager: only employees and records in their department
   if (role === 'manager' || scope === 'Chỉ phòng ban mình') {
     const allEmployees = Array.isArray(cleanState.employees) ? cleanState.employees : [];
     const allowedEmployees = allEmployees.filter(
@@ -613,7 +906,6 @@ export function filterStateBySessionScope(rawState = {}, session = null) {
     };
   }
 
-  // employee (self scope): strictly only their own employee record, attendance, shifts, requests, timesheet
   return {
     employees: Array.isArray(cleanState.employees)
       ? cleanState.employees.filter((e) => e && e.id === empId)
@@ -643,44 +935,118 @@ export function filterStateBySessionScope(rawState = {}, session = null) {
 }
 
 /**
- * Validate and sanitize a single attendance record (Issues N1, N3)
+ * Validate, verify and construct a single attendance record on the server (Issues N1, N3, M1, M2)
+ * - Calls stripSecretsAndSanitize at depth = 1 so fields are NEVER wiped into {} (Issue M1)
+ * - Enforces strict input whitelist, QR verification + one-time token use, server date/time,
+ *   server-calculated lateMinutes/status/otHours, and remoteEnabled + employee.allowRemote (Issue M2)
  */
-export function validateSingleAttendanceRecord(rawRecord, topLevelLat, topLevelLng, topLevelAccuracy, activeSettings = {}) {
+export function validateSingleAttendanceRecord(
+  rawRecord,
+  topLevelLat,
+  topLevelLng,
+  topLevelAccuracy,
+  activeSettings = {},
+  options = {}
+) {
+  const {
+    strictLiveCheckIn = false,
+    topLevelQrToken = '',
+    dbState = null,
+    nowMs = Date.now(),
+  } = options;
+
   if (!rawRecord || typeof rawRecord !== 'object' || Array.isArray(rawRecord)) {
     return { ok: false, error: 'Bản ghi chấm công không hợp lệ.' };
   }
 
+  const allowedKeys = strictLiveCheckIn
+    ? ALLOWED_ATTENDANCE_INPUT_KEYS
+    : ALLOWED_PERSISTED_ATTENDANCE_KEYS;
+
   for (const key of Object.keys(rawRecord)) {
-    if (!ALLOWED_ATTENDANCE_RECORD_KEYS.has(key)) {
-      return { ok: false, error: `Trường không hợp lệ trong bản ghi chấm công: ${key}` };
+    if (!allowedKeys.has(key)) {
+      return {
+        ok: false,
+        error: `Trường không hợp lệ hoặc không được phép tự khai báo trong bản ghi chấm công: ${key}`,
+      };
     }
   }
 
   const employeeId = String(rawRecord.employeeId || '').trim();
-  const date = String(rawRecord.date || '').trim();
   const method = String(rawRecord.method || 'GPS').trim();
 
   if (!/^NV\d{4}$/.test(employeeId)) {
     return { ok: false, error: 'Mã nhân viên (employeeId) không hợp lệ.' };
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return { ok: false, error: 'Ngày chấm công (date) phải có định dạng YYYY-MM-DD.' };
-  }
   if (!ALLOWED_ATTENDANCE_METHODS.has(method)) {
     return { ok: false, error: 'Phương thức chấm công (method) không hợp lệ.' };
   }
 
-  const officeLat = Number(activeSettings.officeLat) || 10.7728;
-  const officeLng = Number(activeSettings.officeLng) || 106.6988;
-  const allowedRadius = Number(activeSettings.allowedRadiusMeters) || 150;
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    ...(activeSettings && typeof activeSettings === 'object' ? activeSettings : {}),
+  };
+
+  const allEmployees = getEffectiveServerEmployees(dbState);
+  const targetEmployee = allEmployees.find((e) => e.id === employeeId);
+  if (!targetEmployee) {
+    return { ok: false, error: `Không tìm thấy nhân viên ${employeeId} trên hệ thống.` };
+  }
+  if (targetEmployee.status === 'Đã nghỉ') {
+    return { ok: false, error: `Nhân viên ${employeeId} đã nghỉ việc, không thể chấm công.` };
+  }
+
+  const vnNow = getVietnamServerNowParts(nowMs);
+  let targetDate = vnNow.todayIso;
+
+  // Overnight shift support: if between 00:00 and 07:00 and employee had 'dem' shift yesterday
+  const yesterdayAssignedShift = getAssignedShiftForEmployee(
+    employeeId,
+    vnNow.yesterdayIso,
+    dbState
+  );
+  const isOvernightYesterdayAllowed = vnNow.hour < 7 && yesterdayAssignedShift === 'dem';
+
+  if (strictLiveCheckIn) {
+    if (rawRecord.date !== undefined && rawRecord.date !== null && String(rawRecord.date).trim() !== '') {
+      const clientDate = String(rawRecord.date).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(clientDate)) {
+        return { ok: false, error: 'Ngày chấm công (date) phải có định dạng YYYY-MM-DD.' };
+      }
+      if (clientDate === vnNow.todayIso) {
+        targetDate = vnNow.todayIso;
+      } else if (clientDate === vnNow.yesterdayIso && isOvernightYesterdayAllowed) {
+        targetDate = vnNow.yesterdayIso;
+      } else {
+        return {
+          ok: false,
+          error: `Không cho phép chấm công lùi ngày hoặc khác ngày hiện tại của máy chủ (${vnNow.todayIso}). Vui lòng gửi đơn 'Bổ sung công' để quản lý duyệt.`,
+        };
+      }
+    } else {
+      targetDate = isOvernightYesterdayAllowed ? vnNow.yesterdayIso : vnNow.todayIso;
+    }
+  } else {
+    const recDate = String(rawRecord.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(recDate)) {
+      return { ok: false, error: 'Ngày chấm công (date) phải có định dạng YYYY-MM-DD.' };
+    }
+    targetDate = recDate;
+  }
+
+  const officeLat = Number(settings.officeLat) || 10.7728;
+  const officeLng = Number(settings.officeLng) || 106.6988;
+  const allowedRadius = Number(settings.allowedRadiusMeters) || 150;
 
   let computedDistance = 0;
   let finalLat = undefined;
   let finalLng = undefined;
   let finalAccuracy = undefined;
 
-  // Issue N3: GPS attendance MUST include valid numeric lat, lng, and accuracy; never trust client distanceMeters
   if (method === 'GPS') {
+    if (settings.gpsEnabled === false) {
+      return { ok: false, error: 'Phương thức chấm công GPS hiện đang tắt trong Cài đặt.' };
+    }
     const rawLat = typeof rawRecord.lat === 'number' ? rawRecord.lat : topLevelLat;
     const rawLng = typeof rawRecord.lng === 'number' ? rawRecord.lng : topLevelLng;
     const rawAcc =
@@ -722,22 +1088,115 @@ export function validateSingleAttendanceRecord(rawRecord, topLevelLat, topLevelL
     finalLng = rawLng;
     finalAccuracy = Math.round(rawAcc);
   } else if (method === 'QR tại cửa') {
+    if (settings.qrEnabled === false) {
+      return { ok: false, error: 'Phương thức chấm công QR hiện đang tắt trong Cài đặt.' };
+    }
+    if (strictLiveCheckIn) {
+      const qrToken = String(topLevelQrToken || rawRecord.qrToken || '').trim();
+      if (!qrToken) {
+        return {
+          ok: false,
+          error: 'Chấm công "QR tại cửa" bắt buộc phải gửi kèm mã qrToken hợp lệ từ màn hình Kiosk.',
+        };
+      }
+      const qrVerification = verifyServerQrToken(qrToken, nowMs);
+      if (!qrVerification.valid || qrVerification.kind !== 'door') {
+        return {
+          ok: false,
+          error: qrVerification.reason || 'Mã QR tại cửa không hợp lệ hoặc đã hết hạn.',
+        };
+      }
+      const replayKey = `${qrVerification.normalizedToken || qrToken.toUpperCase()}__${employeeId}`;
+      if (usedDoorQrTokens.has(replayKey)) {
+        return {
+          ok: false,
+          error: 'Mã QR tại cửa này đã được sử dụng cho nhân viên này. Vui lòng đợi mã QR mới trên màn hình Kiosk.',
+        };
+      }
+      usedDoorQrTokens.set(replayKey, nowMs);
+      // Cleanup old replay keys (> 5 minutes)
+      for (const [k, ts] of usedDoorQrTokens.entries()) {
+        if (nowMs - ts > 5 * 60 * 1000) usedDoorQrTokens.delete(k);
+      }
+    }
     computedDistance = 5;
+  } else if (method === 'Từ xa') {
+    if (!settings.remoteEnabled) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'Tính năng chấm công từ xa (remoteEnabled) đang tắt trên hệ thống.',
+      };
+    }
+    if (!targetEmployee.allowRemote) {
+      return {
+        ok: false,
+        status: 403,
+        error: `Nhân viên ${employeeId} không được cấp quyền chấm công từ xa (allowRemote = false).`,
+      };
+    }
+    computedDistance = 0;
   } else {
-    computedDistance = Math.max(0, Math.min(50000, Number(rawRecord.distanceMeters) || 0));
+    computedDistance = 0;
   }
 
+  const assignedShift = getAssignedShiftForEmployee(employeeId, targetDate, dbState);
+  const hasScheduledShift = Boolean(assignedShift);
+  const shiftTpl =
+    (assignedShift && SERVER_SHIFT_TEMPLATES[assignedShift]) || SERVER_SHIFT_TEMPLATES.hanh_chinh;
+
+  let finalCheckIn = undefined;
+  let finalCheckOut = undefined;
+
+  if (strictLiveCheckIn) {
+    const existingRecords = Array.isArray(dbState?.attendanceRecords)
+      ? dbState.attendanceRecords
+      : [];
+    const existingForDate = existingRecords.find(
+      (r) => r && r.employeeId === employeeId && r.date === targetDate
+    );
+    if (existingForDate && existingForDate.checkIn) {
+      finalCheckIn = String(existingForDate.checkIn).slice(0, 10);
+      finalCheckOut = vnNow.timeHHMM;
+    } else {
+      finalCheckIn = vnNow.timeHHMM;
+      finalCheckOut = undefined;
+    }
+  } else {
+    if (rawRecord.checkIn) finalCheckIn = String(rawRecord.checkIn).slice(0, 10);
+    if (rawRecord.checkOut) finalCheckOut = String(rawRecord.checkOut).slice(0, 10);
+  }
+
+  const graceMins = Math.max(0, Number(settings.graceLateMinutes ?? 5));
+  const calc = calculateServerLateAndOt(
+    finalCheckIn,
+    finalCheckOut,
+    shiftTpl.startTime,
+    shiftTpl.endTime,
+    graceMins
+  );
+
+  const lateMinutes = hasScheduledShift ? calc.lateMinutes : 0;
+  const otHours = calc.otHours;
+  const status = !finalCheckIn
+    ? hasScheduledShift
+      ? 'Chưa chấm'
+      : 'Không có ca'
+    : hasScheduledShift
+    ? calc.status
+    : 'Đúng giờ';
+
   const cleanRecord = {
-    id: String(rawRecord.id || `ATT-${date}-${employeeId}`).slice(0, 64),
+    id: String(rawRecord.id || `ATT-${targetDate}-${employeeId}`).slice(0, 64),
     employeeId,
-    date,
-    shiftCode: rawRecord.shiftCode ? String(rawRecord.shiftCode).slice(0, 32) : null,
-    unscheduled: Boolean(rawRecord.unscheduled),
-    ...(rawRecord.checkIn ? { checkIn: String(rawRecord.checkIn).slice(0, 10) } : {}),
-    ...(rawRecord.checkOut ? { checkOut: String(rawRecord.checkOut).slice(0, 10) } : {}),
-    status: String(rawRecord.status || 'Đúng giờ').slice(0, 32),
-    lateMinutes: Math.max(0, Math.min(1440, Number(rawRecord.lateMinutes) || 0)),
-    otHours: Math.max(0, Math.min(24, Number(rawRecord.otHours) || 0)),
+    date: targetDate,
+    shiftCode: assignedShift || null,
+    unscheduled: !hasScheduledShift,
+    ...(finalCheckIn ? { checkIn: finalCheckIn } : {}),
+    ...(finalCheckOut ? { checkOut: finalCheckOut } : {}),
+    status,
+    lateMinutes,
+    otHours,
     method,
     distanceMeters: computedDistance,
     ...(finalAccuracy !== undefined ? { gpsAccuracy: finalAccuracy } : {}),
@@ -747,13 +1206,19 @@ export function validateSingleAttendanceRecord(rawRecord, topLevelLat, topLevelL
     ...(rawRecord.note ? { note: String(rawRecord.note).slice(0, 300) } : {}),
   };
 
-  return { ok: true, record: stripSecretsAndSanitize(cleanRecord) };
+  // Issue M1: Call stripSecretsAndSanitize at depth = 1 so record fields are preserved in db.json
+  return { ok: true, record: stripSecretsAndSanitize(cleanRecord, 1) };
 }
 
 /**
  * Upsert / Merge incoming state into existing DB state so Machine B never wipes Machine A's records (Issue C1)
  */
-export function mergeServerState(existingState = {}, incomingState = {}, currentSettings = {}, callerSession = null) {
+export function mergeServerState(
+  existingState = {},
+  incomingState = {},
+  currentSettings = {},
+  callerSession = null
+) {
   const merged = { ...existingState };
   const isSuperAdmin = !callerSession || callerSession.role === 'super_admin';
   const isHrOrAdmin =
@@ -771,28 +1236,6 @@ export function mergeServerState(existingState = {}, incomingState = {}, current
 
   const activeSettings = merged.settings || currentSettings || {};
 
-  if (Array.isArray(incomingState.attendanceRecords)) {
-    const validatedIncoming = [];
-    for (const rec of incomingState.attendanceRecords) {
-      const check = validateSingleAttendanceRecord(
-        rec,
-        rec?.lat,
-        rec?.lng,
-        rec?.gpsAccuracy ?? rec?.accuracy,
-        activeSettings
-      );
-      if (check.ok && check.record) {
-        validatedIncoming.push(check.record);
-      }
-    }
-
-    merged.attendanceRecords = mergeByKey(
-      existingState.attendanceRecords || [],
-      validatedIncoming,
-      (r) => `${r.employeeId}__${r.date}`
-    );
-  }
-
   if (isHrOrAdmin && Array.isArray(incomingState.employees)) {
     merged.employees = mergeByKey(
       existingState.employees || [],
@@ -801,19 +1244,43 @@ export function mergeServerState(existingState = {}, incomingState = {}, current
     );
   }
 
-  if (Array.isArray(incomingState.requests)) {
-    merged.requests = mergeByKey(
-      existingState.requests || [],
-      incomingState.requests,
-      (r) => r.id
-    );
-  }
-
   if (Array.isArray(incomingState.shiftAssignments)) {
     merged.shiftAssignments = mergeByKey(
       existingState.shiftAssignments || [],
       incomingState.shiftAssignments,
       (a) => `${a.employeeId}__${a.date}`
+    );
+  }
+
+  if (Array.isArray(incomingState.attendanceRecords)) {
+    const validatedIncoming = [];
+    for (const rec of incomingState.attendanceRecords) {
+      if (!rec || !rec.employeeId || !rec.date) continue;
+      const check = validateSingleAttendanceRecord(
+        rec,
+        rec?.lat,
+        rec?.lng,
+        rec?.gpsAccuracy ?? rec?.accuracy,
+        activeSettings,
+        { strictLiveCheckIn: false, dbState: merged }
+      );
+      if (check.ok && check.record && check.record.employeeId && check.record.date) {
+        validatedIncoming.push(check.record);
+      }
+    }
+
+    merged.attendanceRecords = mergeByKey(
+      (existingState.attendanceRecords || []).filter((r) => r && r.employeeId && r.date),
+      validatedIncoming,
+      (r) => `${r.employeeId}__${r.date}`
+    );
+  }
+
+  if (Array.isArray(incomingState.requests)) {
+    merged.requests = mergeByKey(
+      existingState.requests || [],
+      incomingState.requests,
+      (r) => r.id
     );
   }
 
@@ -881,7 +1348,7 @@ export function mergeServerState(existingState = {}, incomingState = {}, current
     ).slice(0, 500);
   }
 
-  return stripSecretsAndSanitize(merged);
+  return stripSecretsAndSanitize(merged, 0);
 }
 
 export function readDb() {
@@ -889,7 +1356,7 @@ export function readDb() {
     if (fs.existsSync(DB_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
       if (parsed && parsed.state) {
-        parsed.state = stripSecretsAndSanitize(parsed.state);
+        parsed.state = stripSecretsAndSanitize(parsed.state, 0);
       }
       return parsed;
     }
@@ -902,7 +1369,7 @@ export function readDb() {
 export function writeDb(data) {
   const cleanData = {
     syncedAt: data.syncedAt || new Date().toISOString(),
-    state: stripSecretsAndSanitize(data.state || {}),
+    state: stripSecretsAndSanitize(data.state || {}, 0),
   };
   try {
     const tempFile = `${DB_FILE}.tmp`;
@@ -987,7 +1454,7 @@ export async function handleApiRequest(req, res) {
   }
 
   // =========================================================================
-  // 1. AUTHENTICATION ENDPOINTS (Issue B1: Server-side PIN verify & signed session token)
+  // 1. AUTHENTICATION ENDPOINTS (Issues B1 & M3: Random initial PIN + forced first-login change)
   // =========================================================================
   if (urlPath === '/api/auth/login' && req.method === 'POST') {
     try {
@@ -1029,7 +1496,8 @@ export async function handleApiRequest(req, res) {
         return true;
       }
 
-      if (!verifyServerAccountPin(target.id, pin)) {
+      const authCheck = verifyServerAccountPin(target.id, pin);
+      if (!authCheck.valid) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -1040,13 +1508,16 @@ export async function handleApiRequest(req, res) {
         return true;
       }
 
-      const sessionToken = signSessionToken(target);
+      const sessionToken = signSessionToken(target, {
+        mustChangePin: authCheck.mustChangePin,
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           ok: true,
           sessionToken,
           account: target,
+          mustChangePin: authCheck.mustChangePin,
         })
       );
     } catch {
@@ -1074,6 +1545,7 @@ export async function handleApiRequest(req, res) {
       JSON.stringify({
         ok: true,
         account: session.account,
+        mustChangePin: session.mustChangePin,
       })
     );
     return true;
@@ -1089,41 +1561,88 @@ export async function handleApiRequest(req, res) {
     return true;
   }
 
-  if (urlPath === '/api/auth/set-pin' && req.method === 'POST') {
+  if ((urlPath === '/api/auth/set-pin' || urlPath === '/api/auth/change-pin') && req.method === 'POST') {
     const currentDb = readDb();
     const session = verifySessionFromRequest(req, currentDb.state);
     const isAdminSecret = hasValidApiSecret(req);
-    if (
-      !isAdminSecret &&
-      (!session || (session.role !== 'super_admin' && session.role !== 'hr'))
-    ) {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          ok: false,
-          error: 'Chỉ Quản trị cao nhất hoặc Nhân sự (HR) mới được cấp/đặt lại mã PIN.',
-        })
-      );
-      return true;
-    }
 
     try {
       const body = await readJsonBody(req);
-      const targetAccountId = String(body?.targetAccountId || '').trim();
+      const targetAccountId = String(body?.targetAccountId || session?.sub || '').trim();
       const newPin = String(body?.newPin || '').trim();
+      const currentPin = String(body?.currentPin || '').trim();
+
       if (!targetAccountId || newPin.length < 6) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
             ok: false,
-            error: 'Mã PIN mới phải có tối thiểu 6 ký tự.',
+            error: 'Mật khẩu / Mã PIN mới phải có tối thiểu 6 ký tự.',
           })
         );
         return true;
       }
-      writeAuthCredential(targetAccountId, newPin);
+
+      const isSelfChange = Boolean(session && session.sub === targetAccountId);
+      const isHrOrAdmin =
+        isAdminSecret ||
+        Boolean(session && (session.role === 'super_admin' || session.role === 'hr'));
+
+      if (!isSelfChange && !isHrOrAdmin) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'Chỉ Quản trị cao nhất hoặc Nhân sự (HR) mới được cấp/đặt lại mã PIN cho tài khoản khác.',
+          })
+        );
+        return true;
+      }
+
+      if (isSelfChange && currentPin) {
+        const checkOld = verifyServerAccountPin(targetAccountId, currentPin);
+        if (!checkOld.valid) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              ok: false,
+              error: 'Mật khẩu / Mã PIN hiện tại không đúng.',
+            })
+          );
+          return true;
+        }
+        if (currentPin === newPin) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              ok: false,
+              error: 'Mật khẩu / Mã PIN mới phải khác mật khẩu khởi tạo ban đầu.',
+            })
+          );
+          return true;
+        }
+      }
+
+      const nextMustChange = isSelfChange
+        ? false
+        : typeof body?.mustChangePin === 'boolean'
+        ? body.mustChangePin
+        : targetAccountId !== 'ACC-006';
+
+      writeAuthCredential(targetAccountId, newPin, nextMustChange);
+      const refreshedToken =
+        isSelfChange && session
+          ? signSessionToken(session.account, { mustChangePin: false })
+          : undefined;
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          mustChangePin: nextMustChange,
+          ...(refreshedToken ? { sessionToken: refreshedToken } : {}),
+        })
+      );
     } catch {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: 'Dữ liệu đặt mã PIN không hợp lệ.' }));
@@ -1161,7 +1680,6 @@ export async function handleApiRequest(req, res) {
           res.end(JSON.stringify({ ok: false, error: 'Thiếu mã nhân viên (empCode).' }));
           return true;
         }
-        // Personal QR can only be generated for the logged-in user themselves (Issue N2)
         if (
           session &&
           session.empCode !== requestedEmpCode &&
@@ -1178,7 +1696,6 @@ export async function handleApiRequest(req, res) {
           return true;
         }
       } else {
-        // Door QR can ONLY be generated for door_kiosk or management roles (Issue N2)
         if (
           session &&
           session.role !== 'door_kiosk' &&
@@ -1256,7 +1773,7 @@ export async function handleApiRequest(req, res) {
   }
 
   // =========================================================================
-  // 3. SINGLE ATTENDANCE SUBMISSION (Issues N1 & N3: Strict schema & auth)
+  // 3. SINGLE ATTENDANCE SUBMISSION (Issues N1, N3, M1, M2)
   // =========================================================================
   if (urlPath === '/api/attendance' && req.method === 'POST') {
     let parsed;
@@ -1269,7 +1786,6 @@ export async function handleApiRequest(req, res) {
       return true;
     }
 
-    // Issue N1: Reject immediately with 400 if body contains anything other than { record, lat, lng, accuracy, qrToken }
     const allowedTopKeys = new Set(['record', 'lat', 'lng', 'accuracy', 'qrToken']);
     if (
       !parsed ||
@@ -1306,6 +1822,15 @@ export async function handleApiRequest(req, res) {
     }
 
     const targetEmpId = String(parsed.record.employeeId || '').trim();
+    const allEmployees = getEffectiveServerEmployees(currentDb.state);
+    const targetEmp = allEmployees.find((e) => e.id === targetEmpId);
+
+    if (!targetEmp) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Mã nhân viên (employeeId) không tồn tại.' }));
+      return true;
+    }
+
     if (session) {
       if (session.role === 'door_kiosk') {
         res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -1330,24 +1855,45 @@ export async function handleApiRequest(req, res) {
         );
         return true;
       }
+      // Issue M2: Manager can ONLY submit attendance for employees in their own department
+      if (
+        session.role === 'manager' &&
+        targetEmpId !== session.empId &&
+        targetEmp.department !== session.dept
+      ) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: `Forbidden: Quản lý phòng ${session.dept} không được gửi chấm công cho nhân viên phòng ${targetEmp.department}.`,
+          })
+        );
+        return true;
+      }
     }
 
+    const activeSettings = getEffectiveServerSettings(currentDb.state);
     const validation = validateSingleAttendanceRecord(
       parsed.record,
       parsed.lat,
       parsed.lng,
       parsed.accuracy,
-      currentDb.state?.settings || {}
+      activeSettings,
+      {
+        strictLiveCheckIn: true,
+        topLevelQrToken: parsed.qrToken,
+        dbState: currentDb.state,
+      }
     );
 
     if (!validation.ok || !validation.record) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.writeHead(validation.status || 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: validation.error }));
       return true;
     }
 
     const existingRecords = Array.isArray(currentDb.state?.attendanceRecords)
-      ? currentDb.state.attendanceRecords
+      ? currentDb.state.attendanceRecords.filter((r) => r && r.employeeId && r.date)
       : [];
     const nextRecords = mergeByKey(
       existingRecords,
@@ -1446,7 +1992,7 @@ export async function handleApiRequest(req, res) {
         parsed && typeof parsed === 'object' && parsed.state && typeof parsed.state === 'object'
           ? parsed.state
           : parsed;
-      const sanitizedIncoming = stripSecretsAndSanitize(rawState || {});
+      const sanitizedIncoming = stripSecretsAndSanitize(rawState || {}, 0);
       const mergedState = mergeServerState(
         currentDb.state || {},
         sanitizedIncoming,

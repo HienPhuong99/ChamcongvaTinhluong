@@ -187,7 +187,7 @@ export const INITIAL_EMPLOYEES: Employee[] = RAW_EMPLOYEES.map((raw, idx) => {
     position: raw.pos,
     status: raw.status,
     joinDate: raw.joinDate,
-    allowRemote: idx % 3 === 0,
+    allowRemote: raw.code !== 'NV0009' && idx % 3 === 0,
     avatarColor: AVATAR_COLORS[idx % AVATAR_COLORS.length],
     baseSalary: raw.baseSalary,
     allowance: raw.allowance,

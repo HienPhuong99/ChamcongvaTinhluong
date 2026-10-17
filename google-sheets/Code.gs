@@ -4,8 +4,8 @@
  * ============================================================================
  * Hỗ trợ:
  * 1. Toàn bộ REST API bảo mật của phuonghihi (/api/auth/login, /api/auth/session,
- *    /api/auth/logout, /api/auth/set-pin, /api/qr/generate, /api/qr/verify,
- *    /api/attendance, /api/state) cho bản Web trên GitHub Pages & Mobile App.
+ *    /api/auth/logout, /api/auth/set-pin, /api/auth/change-pin, /api/qr/generate,
+ *    /api/qr/verify, /api/attendance, /api/state) cho bản Web trên GitHub Pages & Mobile App.
  * 2. Tự động đồng bộ vào 8 trang tính Google Sheets (NhanVien, PhanCa, DiemDanh,
  *    DonTu, BangCong, BangLuong, CaiDat, NhatKyHeThong) khi gắn với Spreadsheet.
  */
@@ -88,32 +88,54 @@ const DEFAULT_GAS_ACCOUNTS = [
   },
 ];
 
-// One-way salted SHA-256 credential hashes for server-side authentication (Issue B1)
-const DEFAULT_GAS_CREDENTIAL_HASHES = {
-  'ACC-001': {
-    salt: '81b6a1b193744c470cf2fbb390077725',
-    hash: '7cae3f717b871a327ccc096a50e6f08cfa4ecaf38d8bc08160b21243dafe8b0a',
-  },
-  'ACC-002': {
-    salt: '2126ad40e6082f60e11b33a584963194',
-    hash: '5438c4b148ad6820e82ce73818a2ca85681c2768cfa690b3de7384db6630d534',
-  },
-  'ACC-003': {
-    salt: '8dfc8d4fa473d58876d68a4bc398c915',
-    hash: 'd51a4544d5ab17bad7de21af635d56919deca3ba8378bcb8099e18203174da16',
-  },
-  'ACC-004': {
-    salt: '0e70dbcb2ead3efdca7bcf9b41717285',
-    hash: 'ee3b571f3f97c0968886aaa4bde99e4b164b940f3faca9d86171c24864134a25',
-  },
-  'ACC-005': {
-    salt: '44246c65cb35e55e7714a0b50713b110',
-    hash: 'ba0d78770561c0ecd3c5be0a1dc894cf3f66b8a14a49b6656b8af25da975f96a',
-  },
-  'ACC-006': {
-    salt: 'adc8e861328f290d95b960707ce8cdd2',
-    hash: '44f5027a70353ab2cbde7e051e7fbbfbc593c80eb5cbed1d26c0aab60416f630',
-  },
+const DEFAULT_GAS_EMPLOYEES = [
+  { id: 'NV0000', code: 'NV0000', name: 'Quản lý cửa hàng (phuonghihi)', department: 'Ban giám đốc', allowRemote: true },
+  { id: 'NV0001', code: 'NV0001', name: 'Nguyễn Minh Anh', department: 'Nhân sự', allowRemote: false },
+  { id: 'NV0002', code: 'NV0002', name: 'Trần Hoàng Nam', department: 'Nhân sự', allowRemote: false },
+  { id: 'NV0003', code: 'NV0003', name: 'Lê Quang Huy', department: 'Kinh doanh', allowRemote: true },
+  { id: 'NV0004', code: 'NV0004', name: 'Phạm Ngọc Lan', department: 'Kế toán', allowRemote: false },
+  { id: 'NV0005', code: 'NV0005', name: 'Võ Thanh Tùng', department: 'Kỹ thuật', allowRemote: false },
+  { id: 'NV0006', code: 'NV0006', name: 'Đặng Thu Hà', department: 'Chăm sóc KH', allowRemote: true },
+  { id: 'NV0007', code: 'NV0007', name: 'Hoàng Gia Bảo', department: 'Kho vận', allowRemote: false },
+  { id: 'NV0008', code: 'NV0008', name: 'Ngô Khánh Linh', department: 'Marketing', allowRemote: false },
+  { id: 'NV0009', code: 'NV0009', name: 'Bùi Minh Quân', department: 'Kinh doanh', allowRemote: false },
+  { id: 'NV0010', code: 'NV0010', name: 'Lý Tuyết Mai', department: 'Kế toán', allowRemote: false },
+  { id: 'NV0011', code: 'NV0011', name: 'Trương Quốc Khánh', department: 'Kinh doanh', allowRemote: false },
+  { id: 'NV0012', code: 'NV0012', name: 'Phan Mỹ Duyên', department: 'Chăm sóc KH', allowRemote: true },
+  { id: 'NV0013', code: 'NV0013', name: 'Đỗ Anh Tuấn', department: 'Kho vận', allowRemote: false },
+  { id: 'NV0014', code: 'NV0014', name: 'Hồ Thảo Vy', department: 'Marketing', allowRemote: false },
+  { id: 'NV0015', code: 'NV0015', name: 'Dương Đức Thịnh', department: 'Kỹ thuật', allowRemote: true },
+  { id: 'NV0016', code: 'NV0016', name: 'Mai Bích Ngọc', department: 'Kinh doanh', allowRemote: false },
+  { id: 'NV0017', code: 'NV0017', name: 'Vũ Đình Khoa', department: 'Kinh doanh', allowRemote: false },
+  { id: 'NV0018', code: 'NV0018', name: 'Lâm Bảo Trân', department: 'Chăm sóc KH', allowRemote: true },
+  { id: 'NV0019', code: 'NV0019', name: 'Tạ Minh Triết', department: 'Kho vận', allowRemote: false },
+  { id: 'NV0020', code: 'NV0020', name: 'Châu Thanh Thảo', department: 'Kinh doanh', allowRemote: false },
+  { id: 'NV0021', code: 'NV0021', name: 'Đinh Công Vinh', department: 'Kỹ thuật', allowRemote: true },
+  { id: 'NV0022', code: 'NV0022', name: 'Hà Kiều Trinh', department: 'Marketing', allowRemote: false },
+  { id: 'NV0023', code: 'NV0023', name: 'Lương Thế Vinh', department: 'Kho vận', allowRemote: false },
+  { id: 'NV0024', code: 'NV0024', name: 'Kiều Phương Trang', department: 'Chăm sóc KH', allowRemote: true },
+];
+
+const GAS_SHIFTS_BY_CODE = {
+  sang: { code: 'sang', startTime: '08:00', endTime: '17:00', breakMinutes: 60 },
+  chieu: { code: 'chieu', startTime: '13:30', endTime: '21:30', breakMinutes: 45 },
+  dem: { code: 'dem', startTime: '21:30', endTime: '06:00', breakMinutes: 45 },
+};
+
+// Keys allowed in /api/attendance input (Issue M2: status, lateMinutes, otHours, checkIn, checkOut, distanceMeters are server-computed)
+const ALLOWED_ATTENDANCE_INPUT_KEYS = {
+  id: true,
+  employeeId: true,
+  date: true,
+  shiftCode: true,
+  method: true,
+  gpsAccuracy: true,
+  accuracy: true,
+  lat: true,
+  lng: true,
+  photoUrl: true,
+  note: true,
+  qrToken: true,
 };
 
 const ALLOWED_ATTENDANCE_RECORD_KEYS = {
@@ -234,25 +256,54 @@ function writeLargePropJson(baseKey, obj) {
   }
 }
 
-function readGasCredentials() {
-  const custom = readLargePropJson('PHUONGHIHI_CUSTOM_CREDS_V3', {});
-  const merged = {};
-  Object.keys(DEFAULT_GAS_CREDENTIAL_HASHES).forEach(function (k) {
-    merged[k] = DEFAULT_GAS_CREDENTIAL_HASHES[k];
-  });
-  Object.keys(custom || {}).forEach(function (k) {
-    if (custom[k] && custom[k].salt && custom[k].hash) {
-      merged[k] = custom[k];
-    }
-  });
-  return merged;
+function generateRandomGasPassword() {
+  return 'PH-' + Utilities.getUuid().replace(/-/g, '').slice(0, 12);
 }
 
-function writeGasCredential(accountId, rawPin) {
+/**
+ * Đọc hoặc khởi tạo mật khẩu ngẫu nhiên lần đầu vào ScriptProperties (Issue M3: không dùng hash mặc định trong code)
+ */
+function readGasCredentials() {
   const custom = readLargePropJson('PHUONGHIHI_CUSTOM_CREDS_V3', {});
+  const initialPins = readLargePropJson('PHUONGHIHI_INITIAL_PINS_V3', {});
+  let changed = false;
+  DEFAULT_GAS_ACCOUNTS.forEach(function (acc) {
+    const existing = custom && custom[acc.id];
+    if (!existing || !existing.salt || !existing.hash) {
+      const randomPin = generateRandomGasPassword();
+      const salt = Utilities.getUuid().replace(/-/g, '');
+      const hash = sha256Hex(salt + ':' + randomPin);
+      custom[acc.id] = {
+        salt: salt,
+        hash: hash,
+        mustChangePin: true,
+        updatedAt: new Date().toISOString(),
+      };
+      initialPins[acc.id] = {
+        username: acc.username,
+        initialPin: randomPin,
+        generatedAt: new Date().toISOString(),
+      };
+      changed = true;
+    }
+  });
+  if (changed) {
+    writeLargePropJson('PHUONGHIHI_CUSTOM_CREDS_V3', custom);
+    writeLargePropJson('PHUONGHIHI_INITIAL_PINS_V3', initialPins);
+  }
+  return custom;
+}
+
+function writeGasCredential(accountId, rawPin, mustChangePin) {
+  const custom = readGasCredentials();
   const salt = Utilities.getUuid().replace(/-/g, '');
   const hash = sha256Hex(salt + ':' + String(rawPin).trim());
-  custom[accountId] = { salt: salt, hash: hash };
+  custom[accountId] = {
+    salt: salt,
+    hash: hash,
+    mustChangePin: Boolean(mustChangePin),
+    updatedAt: new Date().toISOString(),
+  };
   writeLargePropJson('PHUONGHIHI_CUSTOM_CREDS_V3', custom);
 }
 
@@ -264,6 +315,11 @@ function verifyGasAccountPin(accountId, rawPin) {
   if (!target || !target.salt || !target.hash) return false;
   const computed = sha256Hex(target.salt + ':' + cleanPin);
   return computed === target.hash;
+}
+
+function mustChangeGasAccountPin(accountId) {
+  const creds = readGasCredentials();
+  return Boolean(creds[accountId] && creds[accountId].mustChangePin);
 }
 
 function getEffectiveGasAccounts(state) {
@@ -285,6 +341,42 @@ function getEffectiveGasAccounts(state) {
   return Object.keys(map).map(function (k) {
     return map[k];
   });
+}
+
+function getEffectiveGasEmployees(state) {
+  const st = state || {};
+  const map = {};
+  DEFAULT_GAS_EMPLOYEES.forEach(function (emp) {
+    map[emp.id] = JSON.parse(JSON.stringify(emp));
+  });
+  if (Array.isArray(st.employees)) {
+    st.employees.forEach(function (emp) {
+      if (emp && emp.id) {
+        const prev = map[emp.id] || {};
+        const merged = JSON.parse(JSON.stringify(emp));
+        if (typeof merged.allowRemote !== 'boolean') {
+          merged.allowRemote = Boolean(prev.allowRemote);
+        }
+        if (!merged.department && prev.department) {
+          merged.department = prev.department;
+        }
+        map[emp.id] = merged;
+      }
+    });
+  }
+  return Object.keys(map).map(function (k) {
+    return map[k];
+  });
+}
+
+function findGasEmployeeById(state, employeeId) {
+  const emps = getEffectiveGasEmployees(state);
+  for (let i = 0; i < emps.length; i++) {
+    if (emps[i].id === employeeId || emps[i].code === employeeId) {
+      return emps[i];
+    }
+  }
+  return null;
 }
 
 function signGasSessionToken(account) {
@@ -327,6 +419,8 @@ function verifyGasSessionToken(rawToken, state) {
       }
     }
     if (!liveAcc || !liveAcc.active) return null;
+    const mustChange = mustChangeGasAccountPin(liveAcc.id);
+    liveAcc.mustChangePin = mustChange;
     return {
       sub: liveAcc.id,
       empId: liveAcc.employeeId || payload.empId,
@@ -334,6 +428,7 @@ function verifyGasSessionToken(rawToken, state) {
       role: liveAcc.roleId,
       scope: liveAcc.dataScope,
       dept: liveAcc.department || '',
+      mustChangePin: mustChange,
       account: liveAcc,
     };
   } catch (e) {
@@ -388,7 +483,7 @@ function verifyGasQrToken(rawToken, nowMs) {
       if (Math.abs(currentSlot - slot) > 5) {
         return { valid: false, reason: 'Mã QR cá nhân đã quá hạn 5 phút' };
       }
-      return { valid: true, kind: 'personal', empCode: String(parsed.empCode) };
+      return { valid: true, kind: 'personal', empCode: String(parsed.empCode), normalizedToken: trimmed };
     } catch (e) {
       return { valid: false, reason: 'Dữ liệu JSON của mã QR không hợp lệ' };
     }
@@ -409,7 +504,7 @@ function verifyGasQrToken(rawToken, nowMs) {
   if (Math.abs(currentSlot - slot) > 1) {
     return { valid: false, reason: 'Mã QR tại cửa đã hết hạn sau 45 giây' };
   }
-  return { valid: true, kind: 'door' };
+  return { valid: true, kind: 'door', normalizedToken: clean };
 }
 
 function calcDistanceMetersGas(lat1, lon1, lat2, lon2) {
@@ -424,6 +519,83 @@ function calcDistanceMetersGas(lat1, lon1, lat2, lon2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return Math.round(R * c);
+}
+
+function getVietnamGasNowParts(nowMs) {
+  const d = nowMs ? new Date(nowMs) : new Date();
+  const dateStr = Utilities.formatDate(d, 'Asia/Ho_Chi_Minh', 'yyyy-MM-dd');
+  const timeStr = Utilities.formatDate(d, 'Asia/Ho_Chi_Minh', 'HH:mm');
+  const yesterdayDate = new Date(d.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayStr = Utilities.formatDate(yesterdayDate, 'Asia/Ho_Chi_Minh', 'yyyy-MM-dd');
+  const hourNum = Number(timeStr.split(':')[0]) || 0;
+  return {
+    dateStr: dateStr,
+    timeStr: timeStr,
+    yesterdayStr: yesterdayStr,
+    hourNum: hourNum,
+  };
+}
+
+function timeToMinutesGas(hhmm) {
+  if (!hhmm || typeof hhmm !== 'string') return 0;
+  const parts = hhmm.split(':').map(Number);
+  return (parts[0] || 0) * 60 + (parts[1] || 0);
+}
+
+function getAssignedShiftGas(state, employeeId, dateStr) {
+  const assignments = Array.isArray(state && state.shiftAssignments) ? state.shiftAssignments : [];
+  for (let i = 0; i < assignments.length; i++) {
+    const a = assignments[i];
+    if (a && a.employeeId === employeeId && a.date === dateStr) {
+      if (a.shiftCode === 'nghi') return { shiftCode: 'nghi', shift: null };
+      if (a.shiftCode && GAS_SHIFTS_BY_CODE[a.shiftCode]) {
+        return { shiftCode: a.shiftCode, shift: GAS_SHIFTS_BY_CODE[a.shiftCode] };
+      }
+    }
+  }
+  const dt = new Date(dateStr + 'T00:00:00+07:00');
+  if (dt.getDay() === 0) {
+    return { shiftCode: 'nghi', shift: null };
+  }
+  return { shiftCode: 'sang', shift: GAS_SHIFTS_BY_CODE.sang };
+}
+
+function calculateGasLateAndOt(checkIn, checkOut, shift, settings) {
+  if (!shift || !checkIn) {
+    return { lateMinutes: 0, otHours: 0, status: 'Đúng giờ' };
+  }
+  const graceMinutes =
+    settings && typeof settings.graceLateMinutes === 'number'
+      ? Math.max(0, settings.graceLateMinutes)
+      : 5;
+  const startM = timeToMinutesGas(shift.startTime);
+  let endM = timeToMinutesGas(shift.endTime);
+  let inM = timeToMinutesGas(checkIn);
+  let outM = checkOut ? timeToMinutesGas(checkOut) : endM;
+  const isOvernight = endM <= startM;
+
+  if (isOvernight) {
+    endM += 24 * 60;
+    if (inM < 12 * 60) {
+      inM += 24 * 60;
+    }
+    if (checkOut && outM <= inM) {
+      outM += 24 * 60;
+    }
+  }
+
+  const rawDiff = inM - startM;
+  const lateMinutes = rawDiff > graceMinutes ? rawDiff : 0;
+  let otHours = 0;
+  if (checkOut && outM > endM + 20) {
+    otHours = Math.round(((outM - endM) / 60) * 10) / 10;
+  }
+
+  let status = 'Đúng giờ';
+  if (otHours > 0) status = 'Tăng ca';
+  else if (lateMinutes > 0) status = 'Đi muộn';
+
+  return { lateMinutes: lateMinutes, otHours: otHours, status: status };
 }
 
 function mergeArrayByKey(existingArr, incomingArr, keyFn) {
@@ -479,7 +651,6 @@ function readGasState() {
 function writeGasState(state) {
   const copy = JSON.parse(JSON.stringify(state || {}));
   if (Array.isArray(copy.attendanceRecords)) {
-    // Strip large base64 photos if needed to keep PropertiesService fast and compact
     const compactAtt = copy.attendanceRecords.slice(-400).map(function (r) {
       const c = JSON.parse(JSON.stringify(r));
       if (c.photoUrl && c.photoUrl.length > 4000) {
@@ -581,34 +752,77 @@ function filterStateByScopeGas(rawState, session) {
   };
 }
 
-function validateSingleAttendanceGas(rawRecord, topLat, topLng, topAcc, settings) {
+function validateSingleAttendanceGas(rawRecord, topLat, topLng, topAcc, settings, context) {
   if (!rawRecord || typeof rawRecord !== 'object' || Array.isArray(rawRecord)) {
     return { ok: false, error: 'Bản ghi chấm công không hợp lệ.' };
   }
+  const ctx = context || {};
+  const enforceServerTime = ctx.enforceServerTime !== false;
+  const currentState = ctx.currentState || {};
+  const allowedKeys = enforceServerTime ? ALLOWED_ATTENDANCE_INPUT_KEYS : ALLOWED_ATTENDANCE_RECORD_KEYS;
+
   const keys = Object.keys(rawRecord);
   for (let i = 0; i < keys.length; i++) {
-    if (!ALLOWED_ATTENDANCE_RECORD_KEYS[keys[i]]) {
-      return { ok: false, error: 'Trường không hợp lệ trong bản ghi chấm công: ' + keys[i] };
+    if (!allowedKeys[keys[i]]) {
+      return {
+        ok: false,
+        error:
+          'Trường không hợp lệ hoặc không được phép tự khai trong bản ghi chấm công: "' +
+          keys[i] +
+          '". Giờ chấm, trạng thái, phút muộn và OT do máy chủ tự tính.',
+      };
     }
   }
   const employeeId = String(rawRecord.employeeId || '').trim();
-  const date = String(rawRecord.date || '').trim();
   const method = String(rawRecord.method || 'GPS').trim();
   if (!/^NV\d{4}$/.test(employeeId)) {
     return { ok: false, error: 'Mã nhân viên (employeeId) không hợp lệ.' };
-  }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return { ok: false, error: 'Ngày chấm công (date) phải có định dạng YYYY-MM-DD.' };
   }
   if (!ALLOWED_METHODS[method]) {
     return { ok: false, error: 'Phương thức chấm công không hợp lệ.' };
   }
 
+  const targetEmployee = findGasEmployeeById(currentState, employeeId);
+  if (!targetEmployee) {
+    return { ok: false, error: 'Nhân viên "' + employeeId + '" không tồn tại trên hệ thống.' };
+  }
+
   const s = settings || {};
+  const nowParts = getVietnamGasNowParts();
+  let effectiveDate = nowParts.dateStr;
+  const clientDate = rawRecord.date ? String(rawRecord.date).trim() : '';
+
+  if (clientDate && !/^\d{4}-\d{2}-\d{2}$/.test(clientDate)) {
+    return { ok: false, error: 'Ngày chấm công (date) phải có định dạng YYYY-MM-DD.' };
+  }
+
+  if (enforceServerTime) {
+    if (clientDate && clientDate !== nowParts.dateStr) {
+      const yesterdayShift = getAssignedShiftGas(currentState, employeeId, nowParts.yesterdayStr);
+      const allowYesterdayNightShift =
+        clientDate === nowParts.yesterdayStr &&
+        nowParts.hourNum < 7 &&
+        yesterdayShift.shiftCode === 'dem';
+      if (!allowYesterdayNightShift) {
+        return {
+          ok: false,
+          error:
+            'Không được chấm công lùi ngày hoặc khác ngày hiện tại của máy chủ (' +
+            nowParts.dateStr +
+            '). Nếu cần sửa công ngày cũ, vui lòng gửi đơn "Bổ sung công".',
+        };
+      }
+      effectiveDate = nowParts.yesterdayStr;
+    }
+  } else if (clientDate) {
+    effectiveDate = clientDate;
+  }
+
   const officeLat = Number(s.officeLat) || 10.7728;
   const officeLng = Number(s.officeLng) || 106.6988;
   const allowedRadius = Number(s.allowedRadiusMeters) || 150;
   let computedDistance = 0;
+  let usedQrTokenKey = null;
 
   if (method === 'GPS') {
     const rawLat = typeof rawRecord.lat === 'number' ? rawRecord.lat : topLat;
@@ -646,28 +860,106 @@ function validateSingleAttendanceGas(rawRecord, topLat, topLng, topAcc, settings
       };
     }
   } else if (method === 'QR tại cửa') {
+    if (s.qrEnabled === false) {
+      return { ok: false, error: 'Chấm công bằng mã QR tại cửa đang bị tắt trong Cài đặt.' };
+    }
+    if (enforceServerTime) {
+      const providedQrToken = String(ctx.qrToken || rawRecord.qrToken || '').trim();
+      if (!providedQrToken) {
+        return {
+          ok: false,
+          error: 'Chấm công "QR tại cửa" bắt buộc phải gửi kèm mã qrToken hợp lệ từ Kiosk cửa hàng.',
+        };
+      }
+      const qrResult = verifyGasQrToken(providedQrToken);
+      if (!qrResult.valid || qrResult.kind !== 'door') {
+        return {
+          ok: false,
+          error: qrResult.reason || 'Mã QR tại cửa không hợp lệ hoặc đã hết hạn.',
+        };
+      }
+      const usedTokens = readLargePropJson('PHUONGHIHI_USED_QR_TOKENS_V3', {});
+      const tokenKey = qrResult.normalizedToken + '__' + employeeId;
+      if (usedTokens[tokenKey]) {
+        return {
+          ok: false,
+          error: 'Mã QR tại cửa này đã được nhân viên sử dụng. Vui lòng đợi mã QR mới trên Kiosk.',
+        };
+      }
+      usedQrTokenKey = tokenKey;
+    }
     computedDistance = 5;
+  } else if (method === 'Từ xa') {
+    const remoteEnabled = s.remoteEnabled !== false;
+    if (!remoteEnabled) {
+      return { ok: false, error: 'Chế độ chấm công Từ xa đang bị tắt trên toàn hệ thống.' };
+    }
+    if (!targetEmployee.allowRemote) {
+      return {
+        ok: false,
+        error: 'Nhân viên ' + employeeId + ' chưa được cấp quyền chấm công Từ xa (allowRemote = false).',
+      };
+    }
+    computedDistance = 0;
   } else {
-    computedDistance = Math.max(0, Number(rawRecord.distanceMeters) || 0);
+    computedDistance = 0;
   }
+
+  const assigned = getAssignedShiftGas(currentState, employeeId, effectiveDate);
+  const existingRecords = Array.isArray(currentState.attendanceRecords)
+    ? currentState.attendanceRecords
+    : [];
+  let existingToday = null;
+  for (let i = 0; i < existingRecords.length; i++) {
+    const r = existingRecords[i];
+    if (r && r.employeeId === employeeId && r.date === effectiveDate) {
+      existingToday = r;
+      break;
+    }
+  }
+
+  let checkInTime;
+  let checkOutTime;
+  if (enforceServerTime) {
+    if (existingToday && existingToday.checkIn) {
+      checkInTime = existingToday.checkIn;
+      checkOutTime = nowParts.timeStr;
+    } else {
+      checkInTime = nowParts.timeStr;
+      checkOutTime = undefined;
+    }
+  } else {
+    checkInTime = rawRecord.checkIn ? String(rawRecord.checkIn).slice(0, 10) : nowParts.timeStr;
+    checkOutTime = rawRecord.checkOut ? String(rawRecord.checkOut).slice(0, 10) : undefined;
+  }
+
+  const unscheduled = assigned.shiftCode === 'nghi' || !assigned.shift;
+  const calc = unscheduled
+    ? { lateMinutes: 0, otHours: 0, status: 'Đúng giờ' }
+    : calculateGasLateAndOt(checkInTime, checkOutTime, assigned.shift, s);
+
+  const cleanRecord = {
+    id: String(
+      (existingToday && existingToday.id) || rawRecord.id || 'ATT-' + effectiveDate + '-' + employeeId
+    ).slice(0, 64),
+    employeeId: employeeId,
+    date: effectiveDate,
+    shiftCode: unscheduled ? null : assigned.shiftCode,
+    unscheduled: unscheduled,
+    checkIn: checkInTime,
+    status: calc.status,
+    lateMinutes: calc.lateMinutes,
+    otHours: calc.otHours,
+    method: method,
+    distanceMeters: computedDistance,
+  };
+  if (checkOutTime) cleanRecord.checkOut = checkOutTime;
+  if (rawRecord.note) cleanRecord.note = String(rawRecord.note).slice(0, 300);
 
   return {
     ok: true,
-    record: {
-      id: String(rawRecord.id || 'ATT-' + date + '-' + employeeId).slice(0, 64),
-      employeeId: employeeId,
-      date: date,
-      shiftCode: rawRecord.shiftCode || null,
-      unscheduled: Boolean(rawRecord.unscheduled),
-      checkIn: rawRecord.checkIn || undefined,
-      checkOut: rawRecord.checkOut || undefined,
-      status: String(rawRecord.status || 'Đúng giờ'),
-      lateMinutes: Math.max(0, Number(rawRecord.lateMinutes) || 0),
-      otHours: Math.max(0, Number(rawRecord.otHours) || 0),
-      method: method,
-      distanceMeters: computedDistance,
-      note: rawRecord.note ? String(rawRecord.note).slice(0, 300) : undefined,
-    },
+    record: cleanRecord,
+    usedQrTokenKey: usedQrTokenKey,
   };
 }
 
@@ -815,11 +1107,14 @@ function handleGasRestRoute(route, method, body, sessionToken, apiSecretToken) {
         error: 'Mật khẩu / Mã PIN xác thực không chính xác!',
       };
     }
+    const mustChange = mustChangeGasAccountPin(target.id);
+    target.mustChangePin = mustChange;
     const newSessionToken = signGasSessionToken(target);
     return {
       __httpStatus: 200,
       ok: true,
       sessionToken: newSessionToken,
+      mustChangePin: mustChange,
       account: target,
     };
   }
@@ -835,6 +1130,7 @@ function handleGasRestRoute(route, method, body, sessionToken, apiSecretToken) {
     return {
       __httpStatus: 200,
       ok: true,
+      mustChangePin: Boolean(session.mustChangePin),
       account: session.account,
     };
   }
@@ -843,21 +1139,37 @@ function handleGasRestRoute(route, method, body, sessionToken, apiSecretToken) {
     return { __httpStatus: 200, ok: true };
   }
 
-  if (route === '/api/auth/set-pin' && method === 'POST') {
+  if ((route === '/api/auth/set-pin' || route === '/api/auth/change-pin') && method === 'POST') {
+    const targetAccountId = String((body && body.targetAccountId) || (session && session.sub) || '').trim();
+    const currentPin = String((body && body.currentPin) || '').trim();
+    const newPin = String((body && body.newPin) || '').trim();
+    if (!targetAccountId || newPin.length < 6) {
+      return { __httpStatus: 400, ok: false, error: 'Mật khẩu / mã PIN mới phải có tối thiểu 6 ký tự.' };
+    }
+    const isSelfChange = Boolean(session && session.sub === targetAccountId && currentPin);
+    if (isSelfChange) {
+      if (!verifyGasAccountPin(targetAccountId, currentPin)) {
+        return { __httpStatus: 401, ok: false, error: 'Mật khẩu / mã PIN hiện tại không chính xác.' };
+      }
+      if (currentPin === newPin) {
+        return { __httpStatus: 400, ok: false, error: 'Mật khẩu mới phải khác mật khẩu hiện tại.' };
+      }
+      writeGasCredential(targetAccountId, newPin, false);
+      return { __httpStatus: 200, ok: true, mustChangePin: false };
+    }
     if (!isAdminSecret && (!session || (session.role !== 'super_admin' && session.role !== 'hr'))) {
       return {
         __httpStatus: 403,
         ok: false,
-        error: 'Chỉ Quản trị cao nhất hoặc Nhân sự (HR) mới được cấp/đặt lại mã PIN.',
+        error: 'Chỉ Quản trị cao nhất hoặc Nhân sự (HR) mới được cấp/đặt lại mã PIN cho tài khoản khác.',
       };
     }
-    const targetAccountId = String((body && body.targetAccountId) || '').trim();
-    const newPin = String((body && body.newPin) || '').trim();
-    if (!targetAccountId || newPin.length < 6) {
-      return { __httpStatus: 400, ok: false, error: 'Mã PIN mới phải có tối thiểu 6 ký tự.' };
-    }
-    writeGasCredential(targetAccountId, newPin);
-    return { __httpStatus: 200, ok: true };
+    const requireChangeOnNextLogin =
+      body && typeof body.mustChangePin === 'boolean'
+        ? body.mustChangePin
+        : Boolean(!session || session.sub !== targetAccountId);
+    writeGasCredential(targetAccountId, newPin, requireChangeOnNextLogin);
+    return { __httpStatus: 200, ok: true, mustChangePin: requireChangeOnNextLogin };
   }
 
   if (route === '/api/qr/generate' && method === 'POST') {
@@ -967,7 +1279,15 @@ function handleGasRestRoute(route, method, body, sessionToken, apiSecretToken) {
       };
     }
     const targetEmpId = String(body.record.employeeId || '').trim();
-    if (session) {
+    const targetEmp = findGasEmployeeById(currentState, targetEmpId);
+    if (!targetEmp) {
+      return {
+        __httpStatus: 400,
+        ok: false,
+        error: 'Nhân viên "' + targetEmpId + '" không tồn tại trên hệ thống.',
+      };
+    }
+    if (session && !isAdminSecret) {
       if (session.role === 'door_kiosk') {
         return { __httpStatus: 403, ok: false, error: 'Forbidden: tài khoản Kiosk không được gửi chấm công.' };
       }
@@ -978,16 +1298,42 @@ function handleGasRestRoute(route, method, body, sessionToken, apiSecretToken) {
           error: 'Forbidden: chỉ được chấm công cho chính tài khoản đang đăng nhập.',
         };
       }
+      if (
+        session.role === 'manager' &&
+        targetEmpId !== session.empId &&
+        targetEmp.department !== session.dept
+      ) {
+        return {
+          __httpStatus: 403,
+          ok: false,
+          error:
+            'Forbidden: Quản lý phòng "' +
+            session.dept +
+            '" không được gửi chấm công cho nhân viên thuộc phòng "' +
+            targetEmp.department +
+            '".',
+        };
+      }
     }
     const check = validateSingleAttendanceGas(
       body.record,
       body.lat,
       body.lng,
       body.accuracy,
-      currentState.settings || {}
+      currentState.settings || {},
+      {
+        qrToken: body.qrToken,
+        currentState: currentState,
+        enforceServerTime: true,
+      }
     );
     if (!check.ok || !check.record) {
       return { __httpStatus: 400, ok: false, error: check.error };
+    }
+    if (check.usedQrTokenKey) {
+      const usedTokens = readLargePropJson('PHUONGHIHI_USED_QR_TOKENS_V3', {});
+      usedTokens[check.usedQrTokenKey] = Date.now();
+      writeLargePropJson('PHUONGHIHI_USED_QR_TOKENS_V3', usedTokens);
     }
     const nextRecords = mergeArrayByKey(
       currentState.attendanceRecords || [],
@@ -1163,40 +1509,47 @@ function doPost(e) {
       payload.record &&
       payload.record.id
     ) {
+      const currentState = readGasState();
       const r = payload.record;
       const check = validateSingleAttendanceGas(
         r,
         r.lat,
         r.lng,
         r.gpsAccuracy || r.accuracy,
-        {}
+        currentState.settings || {},
+        {
+          qrToken: payload.qrToken || r.qrToken,
+          currentState: currentState,
+          enforceServerTime: true,
+        }
       );
-      if (!check.ok) {
+      if (!check.ok || !check.record) {
         return jsonResponse({ __httpStatus: 400, ok: false, error: check.error });
       }
+      const validRec = check.record;
       if (ss) {
         const attSheet = ss.getSheetByName(SHEET_NAMES.ATTENDANCE);
         if (attSheet) {
           const rowData = [
-            sanitizeSheetCell(r.id),
-            sanitizeSheetCell(r.employeeId),
-            sanitizeSheetCell(r.date),
-            sanitizeSheetCell(r.shiftCode || ''),
-            sanitizeSheetCell(r.checkIn || ''),
-            sanitizeSheetCell(r.checkOut || ''),
-            sanitizeSheetCell(r.status),
-            Number(r.lateMinutes) || 0,
-            Number(r.otHours) || 0,
-            sanitizeSheetCell(r.method || ''),
-            Number(r.distanceMeters) || 0,
-            sanitizeSheetCell(r.note || ''),
+            sanitizeSheetCell(validRec.id),
+            sanitizeSheetCell(validRec.employeeId),
+            sanitizeSheetCell(validRec.date),
+            sanitizeSheetCell(validRec.shiftCode || ''),
+            sanitizeSheetCell(validRec.checkIn || ''),
+            sanitizeSheetCell(validRec.checkOut || ''),
+            sanitizeSheetCell(validRec.status),
+            Number(validRec.lateMinutes) || 0,
+            Number(validRec.otHours) || 0,
+            sanitizeSheetCell(validRec.method || ''),
+            Number(validRec.distanceMeters) || 0,
+            sanitizeSheetCell(validRec.note || ''),
           ];
           const lastRow = attSheet.getLastRow();
           let updated = false;
           if (lastRow > 1) {
             const ids = attSheet.getRange(2, 1, lastRow - 1, 1).getValues();
             for (let i = 0; i < ids.length; i++) {
-              if (String(ids[i][0]) === String(r.id)) {
+              if (String(ids[i][0]) === String(validRec.id)) {
                 attSheet.getRange(i + 2, 1, 1, 12).setValues([rowData]);
                 updated = true;
                 break;
@@ -1208,7 +1561,7 @@ function doPost(e) {
           }
         }
       }
-      return jsonResponse({ ok: true, updatedAt: new Date().toISOString() });
+      return jsonResponse({ ok: true, updatedAt: new Date().toISOString(), record: validRec });
     }
 
     if (

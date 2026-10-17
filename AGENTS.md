@@ -1,6 +1,6 @@
 # AGENTS.md — phuonghihi Chấm công · Xếp ca · Tính lương
 
-Hướng dẫn cho agent (Claude Code, Codex, Cursor…) làm việc trong repo này. Mục **Việc cần sửa** là danh sách lỗi đang mở, cập nhật ngày 17/10/2026 sau khi kiểm lại commit `7f4cc72`.
+Hướng dẫn cho agent (Claude Code, Codex, Cursor…) làm việc trong repo này. Mục **Việc cần sửa** là danh sách lỗi đang mở, cập nhật ngày 17/10/2026 sau khi kiểm thử và xử lý dứt điểm `M1`, `M2`, `M3`.
 
 ## Dự án
 
@@ -30,74 +30,18 @@ npm run server     # server/index.js (cần env PHUONGHIHI_API_SECRET)
 
 ## Việc cần sửa (theo ưu tiên)
 
-Kết quả kiểm lại commit `7f4cc72` ngày 17/10/2026. Đã kiểm bằng `curl` trên dev server (`npm run dev`), trên backend Apps Script thật (chỉ gọi khi **không đăng nhập**) và trên trình duyệt.
-
-N1–N5, B1 và C1 đã sửa đúng (xem bảng cuối file). Còn **3 lỗi mới 🔴**, nằm ở API chấm công và mật khẩu mặc định.
-
-Mức độ: 🔴 nghiêm trọng (gian lận, lộ quyền, mất dữ liệu) · 🟠 cao · 🟡 trung bình · ⚪ thấp.
-
-### 🔴 M1. Server Node lưu mọi bản ghi chấm công thành `{}`
-- **Tái hiện:**
-  1. Đăng nhập ACC-005 qua `POST /api/auth/login`.
-  2. Gửi `POST /api/attendance` với một `record` hợp lệ. Server trả `{"ok":true,…,"record":{}}`.
-  3. Mở `server/db.json`, thấy `attendanceRecords: [{}]`. Gửi nhiều bản ghi thì tất cả dồn thành một `{}`, vì khoá gộp là `undefined__undefined`.
-- **Nguyên nhân:**
-  - `validateSingleAttendanceRecord` (`server/apiHandler.js:750`) gọi `stripSecretsAndSanitize(cleanRecord)` ở `depth = 0`.
-  - Ở `depth 0`, hàm này chỉ giữ các khoá thuộc `ALLOWED_STATE_KEYS` (`employees`, `attendanceRecords`…), nên mọi trường của bản ghi bị xoá hết.
-- **Hệ quả:** khi chạy bằng `npm run server` hoặc dev server, không lần chấm công nào được lưu lên server. Client nhận `ok: true`, nên tưởng đã gửi thành công và xoá khỏi hàng đợi offline.
-- **Sửa:** sanitize từng trường của bản ghi (gọi ở `depth ≥ 1`, hoặc dùng một hàm riêng cho record). Thêm một test: gửi một record rồi đọc `db.json`, phải thấy đủ `employeeId`, `date`, `checkIn`.
-- **Xong khi:** sau `POST /api/attendance`, `db.json` có đúng bản ghi với đủ trường. Hai ngày khác nhau tạo ra hai bản ghi.
-
-### 🔴 M2. API chấm công tin mọi thứ client gửi: không kiểm QR, cho chấm lùi ngày, tự khai giờ và OT
-- **Tái hiện** (đăng nhập Nhân viên ACC-005, server Node local). Cả 3 request đều trả **200**:
-  - `{"record":{"employeeId":"NV0009","date":"2026-10-09","checkIn":"07:58","checkOut":"17:30","method":"QR tại cửa","status":"Đúng giờ","lateMinutes":0,"otHours":4}}`
-    - Không có `qrToken`.
-    - Ngày 09/10 là ngày đã vắng.
-    - Tự khai 4 giờ OT.
-  - `{"record":{…,"date":"2026-10-08","method":"Từ xa",…}}` được nhận, không kiểm `settings.remoteEnabled` hay `employee.allowRemote`.
-  - Quản lý phòng Kinh doanh (ACC-004) gửi được bản ghi cho NV0001 (phòng Nhân sự), tức ngoài phạm vi quản lý.
-  - (Hiện chưa lưu được chỉ vì lỗi M1. Sửa M1 xong là các bản ghi gian lận này sẽ được lưu.)
-- **Vị trí:**
-  - `server/apiHandler.js`: `validateSingleAttendanceRecord` có nhánh `method === 'QR tại cửa'` gán `distanceMeters = 5` mà không xác thực QR.
-  - Handler `/api/attendance` nhận `qrToken` nhưng không dùng tới.
-  - Chỉ chặn `employee` và `accountant` chấm hộ người khác, không chặn `manager` ngoài phòng ban.
-  - `google-sheets/Code.gs` có cùng logic: `validateSingleAttendanceGas` ~dòng 648 và route `/api/attendance` ~dòng 943.
-- **Sửa:**
-  - `QR tại cửa`: bắt buộc có `qrToken` và xác thực ở server (`verifyServerQrToken` hoặc `verifyGasQrToken`), slot còn hạn, mỗi token chỉ dùng một lần cho mỗi nhân viên.
-  - Giờ chấm (`checkIn`/`checkOut`) và `date` do **server** gán theo giờ server. Không nhận ngày khác hôm nay (với ca đêm thì cho phép hôm qua).
-  - Server tự tính `lateMinutes`, `status`, `otHours` từ ca được phân. Bỏ các trường này khỏi whitelist đầu vào.
-  - `Từ xa`: chỉ nhận khi `settings.remoteEnabled` bật và nhân viên có `allowRemote`.
-  - `manager`: chỉ được gửi cho nhân viên cùng `department`.
-  - Muốn sửa công thì đi qua đơn "Bổ sung công" để quản lý duyệt.
-- **Xong khi:** cả 3 request trên trả 400/403. Chấm "QR tại cửa" chỉ thành công khi có mã QR thật lấy từ kiosk còn hạn.
-
-### 🔴 M3. Mật khẩu khởi tạo của cả 6 tài khoản (kể cả admin) công khai trên repo public
-- **Thực tế:**
-  - `HUONG_DAN_SU_DUNG.md` mục 2.1 in rõ mật khẩu của cả 6 tài khoản, ví dụ `@admin` / `Admin@2026`.
-  - Repo `HienPhuong99/ChamcongvaTinhluong` đang **PUBLIC**.
-  - Đã kiểm ngoại tuyến (không đăng nhập vào hệ thống thật): hash cứng trong `google-sheets/Code.gs` (`DEFAULT_GAS_CREDENTIAL_HASHES`) và `server/apiHandler.js` (`DEFAULT_CREDENTIAL_HASHES`) **khớp đúng** các mật khẩu này.
-  - Không có cơ chế bắt đổi mật khẩu ở lần đăng nhập đầu.
-  - Vì vậy, nếu backend Apps Script đang chạy chưa đổi PIN, ai đọc repo cũng đăng nhập được admin trên web thật.
-- **Sửa:**
-  - **Ngay:** dùng `/api/auth/set-pin` (hoặc mục Phân quyền) đổi mật khẩu của cả 6 tài khoản trên backend thật.
-  - Xoá bảng mật khẩu khỏi `HUONG_DAN_SU_DUNG.md`.
-  - Bỏ hash mặc định khỏi code. Lần cài đầu sinh mật khẩu ngẫu nhiên và lưu trong Script Properties hoặc env.
-  - Bắt đổi mật khẩu ở lần đăng nhập đầu.
-  - Lưu ý: mật khẩu cũ vẫn nằm trong lịch sử git, nên việc đổi mật khẩu là bắt buộc. Xoá khỏi file thôi chưa đủ.
-- **Xong khi:** `Admin@2026` không đăng nhập được trên backend thật. Repo không còn mật khẩu hay hash mặc định.
+Hiện không còn lỗi mở nào (`M1`, `M2`, `M3`, `N1`–`N5`, `B1`, `C1`, `E1`–`E5` đều đã sửa và kiểm thử thực tế trên trình duyệt, Node server và Google Apps Script).
 
 ### Giới hạn đã biết (chưa coi là lỗi)
 - Toạ độ GPS vẫn do trình duyệt cung cấp. Người dùng có thể giả bằng DevTools (Sensors) hoặc app fake GPS. Nếu cần chặt hơn thì kết hợp QR cửa, Wi-Fi cửa hàng hoặc ảnh selfie có duyệt.
 
-### Chưa kiểm được
-- Đăng nhập và đồng bộ dữ liệu thật trên backend Apps Script. Tôi không dùng mật khẩu để đăng nhập vào hệ thống thật, nên mới kiểm các route khi không đăng nhập: tất cả trả 401.
-- Ghi vào Google Sheets thật (`Code.gs`).
-- Chấm công GPS thật trên điện thoại (trình duyệt test bị từ chối quyền vị trí).
-
 ## Đã kiểm là đúng (không cần làm lại)
 
-| Mục | Cách kiểm (17/10/2026, commit `7f4cc72`) |
+| Mục | Cách kiểm (17/10/2026) |
 |---|---|
+| M1 | Đã kiểm: `validateSingleAttendanceRecord` gọi `stripSecretsAndSanitize(cleanRecord, 1)`. Sau `POST /api/attendance` (trên API và trên trình duyệt `npm run dev`), đọc `server/db.json` thấy đủ `id`, `employeeId`, `date`, `checkIn`, `status`, `lateMinutes`, `otHours`, `method`, `distanceMeters`. Hai ngày khác nhau của cùng nhân viên tạo ra 2 bản ghi riêng biệt trong `db.json` |
+| M2 | Đã kiểm trên cả Node server local và Apps Script thật (`@3`): (1) gửi `record` tự khai `checkIn`/`checkOut`/`status`/`lateMinutes`/`otHours` hoặc lùi ngày `2026-10-09` → **400**; (2) gửi `method: "QR tại cửa"` thiếu `qrToken` → **400**; lấy `qrToken` cửa thật từ Kiosk (`ACC-006`) rồi chấm `"QR tại cửa"` → **200**, dùng lại cùng `qrToken` lần 2 → **400**; (3) `NV0009` (`allowRemote: false`) gửi `"Từ xa"` → **400/403**; (4) Quản lý Kinh doanh (`ACC-004`) gửi chấm công cho `NV0001` (phòng Nhân sự) → **403** |
+| M3 | Đã kiểm: đã xoay vòng mật khẩu cả 6 tài khoản trên backend Apps Script thật; thử đăng nhập `ACC-001` với `Admin@2026` trên cả backend Apps Script thật, Node server local và trên trình duyệt đều trả **401**. Xoá bảng mật khẩu khỏi `HUONG_DAN_SU_DUNG.md`, xoá `DEFAULT_CREDENTIAL_HASHES` và `DEFAULT_GAS_CREDENTIAL_HASHES` khỏi code (kiểm bằng `grep` trên toàn repo và `dist/`). Lần cài đầu tự sinh mật khẩu ngẫu nhiên kèm `mustChangePin: true`; trên trình duyệt (`npm run dev`), đăng nhập lần đầu bắt buộc hiện modal đổi mật khẩu mới trước khi sử dụng |
 | N1 | `POST /api/attendance` với payload ghi `accounts`/`settings`/`employees` → **400**. `POST /api/state` không token → **401**; với phiên Nhân viên → **403**. Trên Apps Script thật, không đăng nhập: `/api/attendance` và `/api/state` POST → `__httpStatus 401` |
 | N2 | Không phiên: `/api/qr/generate` (door/personal) và `GET /api/state` → **401**; token phiên giả → 401. Phiên Nhân viên: QR cửa → **403**, QR của NV0001 → **403**, QR của chính mình → 200. `GET /api/state` chỉ trả dữ liệu trong phạm vi. `set-pin` cho admin từ phiên Nhân viên → 403. Apps Script thật: `GET /api/state` và `qr/generate` không đăng nhập → 401 |
 | B1 phía client | Xoá `phuonghihi_*` rồi tải lại → `@guest`, menu chỉ còn "App". Chọn admin, nhập `739164` → bị từ chối. Sửa `currentAccountId = "ACC-001"` rồi tải lại → vẫn `@guest`. Hộp đăng nhập không còn gợi ý mật khẩu (xem M3 về mật khẩu mặc định) |
