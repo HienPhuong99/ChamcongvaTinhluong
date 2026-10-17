@@ -1,6 +1,6 @@
 # AGENTS.md — phuonghihi Chấm công · Xếp ca · Tính lương
 
-Hướng dẫn cho agent (Claude Code, Codex, Cursor…) làm việc trong repo này. Mục **Việc cần sửa** là danh sách lỗi đang mở, cập nhật ngày 17/10/2026 sau khi kiểm lại commit `5843d2a`.
+Hướng dẫn cho agent (Claude Code, Codex, Cursor…) làm việc trong repo này. Mục **Việc cần sửa** là danh sách lỗi đang mở, cập nhật ngày 17/10/2026 sau khi kiểm lại commit `7f4cc72`.
 
 ## Dự án
 
@@ -30,27 +30,84 @@ npm run server     # server/index.js (cần env PHUONGHIHI_API_SECRET)
 
 ## Việc cần sửa (theo ưu tiên)
 
-Hiện tại toàn bộ các mục (`N1`, `N2`, `B1`, `C1`, `N3`, `N4`, `N5`, `E2`, `D3`, `Code.gs`) đã được sửa tận gốc và kiểm thử đầy đủ bằng `curl` + trình duyệt.
+Kết quả kiểm lại commit `7f4cc72` ngày 17/10/2026. Đã kiểm bằng `curl` trên dev server (`npm run dev`), trên backend Apps Script thật (chỉ gọi khi **không đăng nhập**) và trên trình duyệt.
+
+N1–N5, B1 và C1 đã sửa đúng (xem bảng cuối file). Còn **3 lỗi mới 🔴**, nằm ở API chấm công và mật khẩu mặc định.
+
+Mức độ: 🔴 nghiêm trọng (gian lận, lộ quyền, mất dữ liệu) · 🟠 cao · 🟡 trung bình · ⚪ thấp.
+
+### 🔴 M1. Server Node lưu mọi bản ghi chấm công thành `{}`
+- **Tái hiện:**
+  1. Đăng nhập ACC-005 qua `POST /api/auth/login`.
+  2. Gửi `POST /api/attendance` với một `record` hợp lệ. Server trả `{"ok":true,…,"record":{}}`.
+  3. Mở `server/db.json`, thấy `attendanceRecords: [{}]`. Gửi nhiều bản ghi thì tất cả dồn thành một `{}`, vì khoá gộp là `undefined__undefined`.
+- **Nguyên nhân:**
+  - `validateSingleAttendanceRecord` (`server/apiHandler.js:750`) gọi `stripSecretsAndSanitize(cleanRecord)` ở `depth = 0`.
+  - Ở `depth 0`, hàm này chỉ giữ các khoá thuộc `ALLOWED_STATE_KEYS` (`employees`, `attendanceRecords`…), nên mọi trường của bản ghi bị xoá hết.
+- **Hệ quả:** khi chạy bằng `npm run server` hoặc dev server, không lần chấm công nào được lưu lên server. Client nhận `ok: true`, nên tưởng đã gửi thành công và xoá khỏi hàng đợi offline.
+- **Sửa:** sanitize từng trường của bản ghi (gọi ở `depth ≥ 1`, hoặc dùng một hàm riêng cho record). Thêm một test: gửi một record rồi đọc `db.json`, phải thấy đủ `employeeId`, `date`, `checkIn`.
+- **Xong khi:** sau `POST /api/attendance`, `db.json` có đúng bản ghi với đủ trường. Hai ngày khác nhau tạo ra hai bản ghi.
+
+### 🔴 M2. API chấm công tin mọi thứ client gửi: không kiểm QR, cho chấm lùi ngày, tự khai giờ và OT
+- **Tái hiện** (đăng nhập Nhân viên ACC-005, server Node local). Cả 3 request đều trả **200**:
+  - `{"record":{"employeeId":"NV0009","date":"2026-10-09","checkIn":"07:58","checkOut":"17:30","method":"QR tại cửa","status":"Đúng giờ","lateMinutes":0,"otHours":4}}`
+    - Không có `qrToken`.
+    - Ngày 09/10 là ngày đã vắng.
+    - Tự khai 4 giờ OT.
+  - `{"record":{…,"date":"2026-10-08","method":"Từ xa",…}}` được nhận, không kiểm `settings.remoteEnabled` hay `employee.allowRemote`.
+  - Quản lý phòng Kinh doanh (ACC-004) gửi được bản ghi cho NV0001 (phòng Nhân sự), tức ngoài phạm vi quản lý.
+  - (Hiện chưa lưu được chỉ vì lỗi M1. Sửa M1 xong là các bản ghi gian lận này sẽ được lưu.)
+- **Vị trí:**
+  - `server/apiHandler.js`: `validateSingleAttendanceRecord` có nhánh `method === 'QR tại cửa'` gán `distanceMeters = 5` mà không xác thực QR.
+  - Handler `/api/attendance` nhận `qrToken` nhưng không dùng tới.
+  - Chỉ chặn `employee` và `accountant` chấm hộ người khác, không chặn `manager` ngoài phòng ban.
+  - `google-sheets/Code.gs` có cùng logic: `validateSingleAttendanceGas` ~dòng 648 và route `/api/attendance` ~dòng 943.
+- **Sửa:**
+  - `QR tại cửa`: bắt buộc có `qrToken` và xác thực ở server (`verifyServerQrToken` hoặc `verifyGasQrToken`), slot còn hạn, mỗi token chỉ dùng một lần cho mỗi nhân viên.
+  - Giờ chấm (`checkIn`/`checkOut`) và `date` do **server** gán theo giờ server. Không nhận ngày khác hôm nay (với ca đêm thì cho phép hôm qua).
+  - Server tự tính `lateMinutes`, `status`, `otHours` từ ca được phân. Bỏ các trường này khỏi whitelist đầu vào.
+  - `Từ xa`: chỉ nhận khi `settings.remoteEnabled` bật và nhân viên có `allowRemote`.
+  - `manager`: chỉ được gửi cho nhân viên cùng `department`.
+  - Muốn sửa công thì đi qua đơn "Bổ sung công" để quản lý duyệt.
+- **Xong khi:** cả 3 request trên trả 400/403. Chấm "QR tại cửa" chỉ thành công khi có mã QR thật lấy từ kiosk còn hạn.
+
+### 🔴 M3. Mật khẩu khởi tạo của cả 6 tài khoản (kể cả admin) công khai trên repo public
+- **Thực tế:**
+  - `HUONG_DAN_SU_DUNG.md` mục 2.1 in rõ mật khẩu của cả 6 tài khoản, ví dụ `@admin` / `Admin@2026`.
+  - Repo `HienPhuong99/ChamcongvaTinhluong` đang **PUBLIC**.
+  - Đã kiểm ngoại tuyến (không đăng nhập vào hệ thống thật): hash cứng trong `google-sheets/Code.gs` (`DEFAULT_GAS_CREDENTIAL_HASHES`) và `server/apiHandler.js` (`DEFAULT_CREDENTIAL_HASHES`) **khớp đúng** các mật khẩu này.
+  - Không có cơ chế bắt đổi mật khẩu ở lần đăng nhập đầu.
+  - Vì vậy, nếu backend Apps Script đang chạy chưa đổi PIN, ai đọc repo cũng đăng nhập được admin trên web thật.
+- **Sửa:**
+  - **Ngay:** dùng `/api/auth/set-pin` (hoặc mục Phân quyền) đổi mật khẩu của cả 6 tài khoản trên backend thật.
+  - Xoá bảng mật khẩu khỏi `HUONG_DAN_SU_DUNG.md`.
+  - Bỏ hash mặc định khỏi code. Lần cài đầu sinh mật khẩu ngẫu nhiên và lưu trong Script Properties hoặc env.
+  - Bắt đổi mật khẩu ở lần đăng nhập đầu.
+  - Lưu ý: mật khẩu cũ vẫn nằm trong lịch sử git, nên việc đổi mật khẩu là bắt buộc. Xoá khỏi file thôi chưa đủ.
+- **Xong khi:** `Admin@2026` không đăng nhập được trên backend thật. Repo không còn mật khẩu hay hash mặc định.
+
+### Giới hạn đã biết (chưa coi là lỗi)
+- Toạ độ GPS vẫn do trình duyệt cung cấp. Người dùng có thể giả bằng DevTools (Sensors) hoặc app fake GPS. Nếu cần chặt hơn thì kết hợp QR cửa, Wi-Fi cửa hàng hoặc ảnh selfie có duyệt.
+
+### Chưa kiểm được
+- Đăng nhập và đồng bộ dữ liệu thật trên backend Apps Script. Tôi không dùng mật khẩu để đăng nhập vào hệ thống thật, nên mới kiểm các route khi không đăng nhập: tất cả trả 401.
+- Ghi vào Google Sheets thật (`Code.gs`).
+- Chấm công GPS thật trên điện thoại (trình duyệt test bị từ chối quyền vị trí).
 
 ## Đã kiểm là đúng (không cần làm lại)
 
-| Mục | Cách kiểm |
+| Mục | Cách kiểm (17/10/2026, commit `7f4cc72`) |
 |---|---|
-| N1 | Đã kiểm bằng `curl -X POST http://localhost:5173/api/attendance` với payload ghi đè `accounts`/`settings`/`employees`: trả `400 Bad Request` (`/api/attendance` chỉ nhận duy nhất một `record` theo whitelist trường và bắt buộc phiên đăng nhập khớp `employeeId`), `db.json` không đổi. Mở trình duyệt mới vẫn có đủ 51 nhân viên (`HRMContext.tsx` gộp theo `id` cho cả `employees` và `accounts`) |
-| N2 | Đã kiểm bằng `curl`: `POST /api/qr/generate` (cả `door` và `personal`) và `GET /api/state` không có phiên đều trả `401`. Khi đăng nhập Nhân viên `ACC-005` (`NV0009`), gọi `kind: 'door'` trả `403`, gọi `empCode: 'NV0001'` trả `403`, gọi `empCode: 'NV0009'` trả `200`. `GET /api/state` lọc dữ liệu theo `filterStateBySessionScope` |
-| B1 | Đã kiểm trên trình duyệt sau khi xoá `phuonghihi_*`: máy mới mặc định ở màn đăng nhập (`LOGGED_OUT`), không vào thẳng `@admin`. Chọn "Quản lý cửa hàng" hiện hộp thoại xác thực Server (không còn "Thiết lập mã PIN bảo mật lần đầu"), nhập `739164` bị từ chối. Sửa `localStorage` (`currentAccountId` / `sessionToken` giả) rồi tải lại vẫn ở màn đăng nhập |
-| C1 | Đã triển khai Backend miễn phí 100% lên Google Apps Script Web App (`Code.gs` + `appsscript.json`), cấu hình `VITE_PHUONGHIHI_BACKEND_URL` trong `.github/workflows/deploy.yml`, thêm `backendFetch` hỗ trợ CORS simple request (`text/plain;charset=utf-8`) và hàng đợi `offlineQueue` (`flushOfflineAttendanceQueue`) tự gửi lại khi có mạng kèm thông báo Toast |
-| N3 | Đã kiểm bằng `curl`: gửi `POST /api/attendance` với `method: 'GPS'` thiếu `lat`/`lng`/`accuracy` trả `400`; gửi kèm tọa độ cách xa kèm `distanceMeters: 5` giả mạo trả `400` (`Khoảng cách GPS thực tế (10245m) vượt quá bán kính cho phép (150m)`) |
-| N4 | Đã xoá `demoGpsSimulationEnabled` khỏi `SystemSettings` và state đồng bộ; cờ demo chỉ lấy từ `import.meta.env.VITE_ENABLE_GPS_DEMO` lúc build. Kiểm trên trình duyệt không còn nút "📍 Demo: Tại quầy" |
-| N5 | Đã sửa `computeEmployeeTimesheetRow` chỉ tính cột `Vắng` cho các ngày `< todayIso` hoặc `todayIso` khi ca đã kết thúc (`nowMins > endMins`), và chỉ trừ ngày phép đã duyệt rơi vào những ngày có ca đã qua. Kiểm trên trình duyệt Bảng công 10/2026: cột Vắng giảm từ 3 xuống 2 (không tính ca hôm nay chưa kết thúc) |
-| E2, D3, Code.gs | Đã nâng cấp `compressImageToDataUrl` dùng `createImageBitmap` + `OffscreenCanvas` (kiểm trên trình duyệt nén ảnh `1600x1200` 2.3MB xuống `480x360` JPEG 4.9KB không treo khi tab ẩn); kiểm `D3` ngoài lịch phân ca không tính muộn; kiểm `Code.gs` Web App xác thực phiên, ký/verify QR và đồng bộ state/attendance |
-| E1 kiosk | Tài khoản Nhân viên không còn nút "QR tại cửa". `setIsDoorQrModalOpen` chặn vai trò không phải kiosk/quản lý. Không còn nút "Tự quét" |
-| B3 phía client | GPS bị từ chối thì nút chấm công hiện "Cần cấp quyền GPS". Không còn nút giả lập (khi cờ demo tắt), không còn ảnh selfie vẽ bằng canvas. (Phía server xem N3, N4) |
-| B5 | Ký QR bằng HMAC-SHA256 ở server, client không giữ khoá. (Cấp mã không xác thực, xem N2) |
-| E3 | Đã nạp `phuonghihi_hrm_state_v2_settings` chứa URL `AKfycbx66egogcD…` và `phuonghihi_qr_hmac_seed_v1`, rồi tải lại: key cũ bị xoá, `googleSheetsWebAppUrl = ''` |
-| E4 | Bảng công 10/2026 có cột Vắng = 1–3 (trước đây luôn 0). Lỗi nhỏ còn lại xem N5 |
-| E5 | Mặc định Bảng công mở 10/2026; Bảng lương và Báo cáo mở 9/2026, tính theo ngày thật |
-| C2 phía client | Token lưu ở `phuonghihi_local_api_secret_token_v3`. `sanitizeSettingsObject`/`sanitizeAccountsList` xoá token và PIN trước khi đồng bộ. (GET không xác thực, xem N2) |
-| C8, C5, D5 | Đọc code: `graceLateMinutes` và `allowEarlyCheckInMinutes` được dùng trong `checkInOrOut`; EWA = 0 khi chưa khai lương; tài khoản bị khoá chuyển sang `LOGGED_OUT` (đã thấy màn "Phiên làm việc đã đăng xuất" khi danh sách tài khoản bị đổi) |
+| N1 | `POST /api/attendance` với payload ghi `accounts`/`settings`/`employees` → **400**. `POST /api/state` không token → **401**; với phiên Nhân viên → **403**. Trên Apps Script thật, không đăng nhập: `/api/attendance` và `/api/state` POST → `__httpStatus 401` |
+| N2 | Không phiên: `/api/qr/generate` (door/personal) và `GET /api/state` → **401**; token phiên giả → 401. Phiên Nhân viên: QR cửa → **403**, QR của NV0001 → **403**, QR của chính mình → 200. `GET /api/state` chỉ trả dữ liệu trong phạm vi. `set-pin` cho admin từ phiên Nhân viên → 403. Apps Script thật: `GET /api/state` và `qr/generate` không đăng nhập → 401 |
+| B1 phía client | Xoá `phuonghihi_*` rồi tải lại → `@guest`, menu chỉ còn "App". Chọn admin, nhập `739164` → bị từ chối. Sửa `currentAccountId = "ACC-001"` rồi tải lại → vẫn `@guest`. Hộp đăng nhập không còn gợi ý mật khẩu (xem M3 về mật khẩu mặc định) |
+| C1 | Bundle trên GitHub Pages (`index-9UrpZBol.js`) có URL Apps Script `AKfycbysdr…`. Backend Apps Script phản hồi và chặn mọi route khi chưa đăng nhập |
+| N3 | GPS thiếu `lat`/`lng`/`accuracy` → 400. Toạ độ cách 11km kèm `distanceMeters: 5` giả → 400 ("11193m vượt quá 150m") |
+| N4 | Tài khoản Nhân viên không còn nút "📍 Demo: Tại quầy/Ngoài vùng" |
+| N5 | Bảng công 10/2026: cột Vắng của NV0001 giảm từ 3 xuống 2 (không tính ca hôm nay chưa kết thúc) |
+| E2 | `compressImageToDataUrl`: ảnh 3000×2000 → JPEG **480×320, 23KB**, không treo |
+| E1 | Tài khoản Nhân viên không có nút "QR tại cửa" |
+| E3 | Key `_v2` và URL Apps Script web bán hàng bị dọn (kiểm ở `5843d2a`) |
+| E4, E5 | Cột Vắng có số liệu. Kỳ mặc định tính theo ngày thật (kiểm ở `5843d2a`) |
+| C8, C5, D5, D3 | Đọc code ở `5843d2a`/`7f4cc72`: `graceLateMinutes`/`allowEarlyCheckInMinutes` được dùng; EWA = 0 khi chưa khai lương; tài khoản khoá → `LOGGED_OUT`; ngày không có ca không tính muộn |
 | Trước đó | Lịch ca và kỳ lương không giới hạn tháng 10/2026. Ô QR để trống không tự chấm công. Không dán được QR của đồng nghiệp. Uỷ nhiệm chi không bịa số tài khoản. Bảng công tính từ chấm công. Biểu đồ Báo cáo lấy dữ liệu thật. Hàm tính muộn ca đêm đúng. Không cho NV0000 nghỉ việc. Giao diện 375px không tràn. Deploy GitHub Pages chạy được. Bundle `dist/` không còn secret cũ |
-
